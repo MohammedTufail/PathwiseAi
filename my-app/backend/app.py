@@ -7,7 +7,10 @@ from learning_system import generate_curriculum, attach_resources
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=[
+    "https://pathwise-ai-blue.vercel.app",
+    "http://localhost:5173"
+])
 
 @app.route("/api/health", methods=["GET"])
 def health():
