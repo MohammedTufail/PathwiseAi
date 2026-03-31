@@ -1,19 +1,24 @@
+
+// What changed from the previous version:
+//   1. Removed the inline WeekCard component (now in components/progress/WeekCard.tsx)
+//   2. Removed `completedWeeks` useState — progress comes from the DB via useProgress
+//   3. Added useProgress hook — loads/saves all week progress
+//   4. overallProgress is now calculated from DB-completed weeks, not hardcoded
+//   5. The new WeekCard receives weekProgress + isLocked + actions from useProgress
+//   6. Sidebar profile + progress bar now reflect real DB progress
+// ─────────────────────────────────────────────────────────────────────────────
+
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { motion, useInView } from "framer-motion";
-import { useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
-  Brain,
-  Sparkles,
-  Calendar,
-  CheckCircle2,
   LogOut,
   Menu,
   TrendingUp,
   Target,
   Clock,
   Map,
-  Lightbulb,
+  AlertCircle,
   BrainCircuit,
 } from "lucide-react";
 
@@ -26,7 +31,17 @@ import {
   IconUserBolt,
   IconSettings,
 } from "@tabler/icons-react";
-import QuizModal from "../components/quiz/QuizModal";
+
+// New: progress-aware WeekCard
+import WeekCard from "../components/progress/WeekCard";
+
+// New: progress hook
+import { useProgress } from "../hooks/useProgress";
+
+import ChatWidget from "../components/chat/ChatWidget";
+
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 type ResourceItem = {
   title?: string;
@@ -57,6 +72,8 @@ type UserData = {
   goal?: string;
   startedAt?: string;
 };
+
+// ─── Example curriculum (shown when localStorage is empty) ───────────────────
 
 const exampleCurriculum: CurriculumData = {
   weeks: [
@@ -102,6 +119,7 @@ const exampleCurriculum: CurriculumData = {
   ],
 };
 
+// ─── Sidebar links ────────────────────────────────────────────────────────────
 
 const sidebarLinks = [
   {
@@ -123,149 +141,8 @@ const sidebarLinks = [
   },
 ];
 
-// ─── WeekCard ─────────────────────────────────────────────────────────────────
-// Defined outside LearningPath, so `navigate` is NOT in scope here.
-// All navigation is done through the `onViewDetails` callback prop — never
-// call navigate() directly inside this component.
-const WeekCard = ({
-  week,
-  index,
-  completedWeeks,
-  subject,
-  onViewDetails,
-}: {
-  week: WeekData;
-  index: number;
-  completedWeeks: number;
-  subject: string;
-  onViewDetails: () => void;
-}) => {
-  const ref = useRef(null);
-  const isInView = useInView(ref, { once: true, margin: "-60px" });
-  const isCompleted = index < completedWeeks;
-  const isCurrent = index === completedWeeks;
-
-  return (
-    <motion.div
-      ref={ref}
-      initial={{ opacity: 0, x: -24 }}
-      animate={isInView ? { opacity: 1, x: 0 } : { opacity: 0, x: -24 }}
-      transition={{
-        duration: 0.5,
-        delay: index * 0.07,
-        ease: [0.25, 0.46, 0.45, 0.94],
-      }}
-      className="relative"
-    >
-      {/* Timeline dot */}
-      <div className="absolute left-4 top-8 z-10">
-        {isCompleted ? (
-          <motion.div
-            initial={{ scale: 0 }}
-            animate={isInView ? { scale: 1 } : { scale: 0 }}
-            transition={{
-              delay: index * 0.07 + 0.3,
-              type: "spring",
-              stiffness: 260,
-            }}
-            className="w-2.5 h-2.5 rounded-full bg-green-500 border-2 border-green-500 shadow-[0_0_8px_#22c55e]"
-          />
-        ) : isCurrent ? (
-          <motion.div
-            animate={{ scale: [1, 1.3, 1], opacity: [1, 0.6, 1] }}
-            transition={{ repeat: Infinity, duration: 2, ease: "easeInOut" }}
-            className="w-2.5 h-2.5 rounded-full bg-green-400 border-2 border-green-400 shadow-[0_0_12px_#4ade80]"
-          />
-        ) : (
-          <div className="w-2.5 h-2.5 rounded-full bg-black border-2 border-white/20" />
-        )}
-      </div>
-
-      <div className="ml-10 relative rounded-2xl p-[1px] bg-gradient-to-r from-white/10 via-white/20 to-white/10 hover:from-green-500/20 hover:via-white/20 hover:to-green-500/20 transition-all duration-500">
-        <GlowingEffect
-          spread={60}
-          glow
-          disabled={false}
-          proximity={80}
-          inactiveZone={0.05}
-        />
-        <div className="relative rounded-2xl bg-gradient-to-br from-black via-gray-900/90 to-black p-6 border border-white/8 group hover:border-green-400/30 transition-all duration-400">
-          {/* Completed badge */}
-          <div className="flex items-center gap-2 mb-2">
-            {isCompleted && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.2 }}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-500/10 border border-green-500/30 text-green-400 text-[10px] font-semibold tracking-wider uppercase"
-              >
-                <CheckCircle2 className="h-3 w-3" />
-                Done
-              </motion.div>
-            )}
-          </div>
-
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-xs text-gray-500 flex items-center gap-1.5 font-medium tracking-widest uppercase">
-                <Calendar className="h-3.5 w-3.5 text-green-400" />
-                Week {week.week}
-              </p>
-              <h3 className="text-lg font-bold text-white mt-1.5 group-hover:text-green-100 transition-colors duration-300">
-                {week.title}
-              </h3>
-              <p className="text-sm text-gray-500 mt-1.5">
-                Project:{" "}
-                <span className="text-green-400 font-semibold">
-                  {week.project}
-                </span>
-              </p>
-            </div>
-
-            {/* Buttons */}
-            <div className="flex items-center gap-2 shrink-0">
-              <QuizModal
-                subject={subject}
-                topics={week.topics}
-                weekTitle={week.title}
-                difficulty="mixed"
-                total={10}
-              />
-              {/* onViewDetails is called here — navigate() lives in parent */}
-              <Button
-                onClick={onViewDetails}
-                className="rounded-xl bg-green-600 hover:bg-green-500 shadow-[0_0_10px_#22c55e]"
-              >
-                View Details
-              </Button>
-            </div>
-          </div>
-
-          <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {week.topics.map((topic, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, y: 6 }}
-                animate={isInView ? { opacity: 1, y: 0 } : { opacity: 0, y: 6 }}
-                transition={{ delay: index * 0.07 + 0.15 + i * 0.05 }}
-                className="flex items-center gap-2 text-sm px-3 py-2 rounded-xl bg-white/4 border border-white/8 hover:border-green-400/30 hover:bg-green-500/5 transition-all duration-250 cursor-default"
-              >
-                <CheckCircle2
-                  className={`h-4 w-4 shrink-0 transition-colors duration-200 ${
-                    isCompleted ? "text-green-500" : "text-gray-600"
-                  }`}
-                />
-                <span className="text-gray-300 leading-tight">{topic}</span>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </motion.div>
-  );
-};
-
 // ─── StatPill ─────────────────────────────────────────────────────────────────
+
 const StatPill = ({
   icon,
   label,
@@ -290,20 +167,23 @@ const StatPill = ({
 );
 
 // ─── LearningPath page ────────────────────────────────────────────────────────
+
 const LearningPath = () => {
   const navigate = useNavigate();
+
+  // ── UI state ─────────────────────────────────────────────────────────────
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [curriculum, setCurriculum] = useState<CurriculumData | null>(null);
   const [userData, setUserData] = useState<UserData>({ name: "User" });
-  const [completedWeeks] = useState(1);
   const [subject, setSubject] = useState("");
-const displaySubject: string =
-  subject && subject.trim() !== "" ? subject : "Java";
+
+  // ── Load subject from localStorage ───────────────────────────────────────
   useEffect(() => {
-    const stored = localStorage.getItem("subject");
-    if (stored) setSubject(stored);
+   const stored = localStorage.getItem("subject");
+   if (stored) setSubject(stored);
   }, []);
 
+  // ── Load curriculum from localStorage ────────────────────────────────────
   useEffect(() => {
     const stored = localStorage.getItem("curriculum");
     if (!stored) {
@@ -322,6 +202,7 @@ const displaySubject: string =
     }
   }, []);
 
+  // ── Load real user name from localStorage ─────────────────────────────────
   useEffect(() => {
     const tryKeys = [
       "user",
@@ -334,24 +215,23 @@ const displaySubject: string =
 
     for (const key of tryKeys) {
       const raw = localStorage.getItem(key);
-      if (raw) {
-        try {
-          const parsed = JSON.parse(raw);
-          const name =
-            parsed?.name ||
-            parsed?.displayName ||
-            parsed?.username ||
-            parsed?.fullName ||
-            null;
-          if (name && typeof name === "string") {
-            found = { name, goal: parsed?.goal, startedAt: parsed?.startedAt };
-            break;
-          }
-        } catch {
-          if (typeof raw === "string" && raw.length > 0 && raw.length < 60) {
-            found = { name: raw };
-            break;
-          }
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw);
+        const name =
+          parsed?.name ||
+          parsed?.displayName ||
+          parsed?.username ||
+          parsed?.fullName ||
+          null;
+        if (name && typeof name === "string") {
+          found = { name, goal: parsed?.goal, startedAt: parsed?.startedAt };
+          break;
+        }
+      } catch {
+        if (typeof raw === "string" && raw.length > 0 && raw.length < 60) {
+          found = { name: raw };
+          break;
         }
       }
     }
@@ -375,9 +255,42 @@ const displaySubject: string =
     if (found) setUserData(found);
   }, []);
 
+  // ── Progress tracking ─────────────────────────────────────────────────────
+  // courseId uses the subject string so different subjects have separate progress.
+  // Falls back to "default-course" when subject hasn't loaded yet.
+  const courseId = subject || "default-course";
+
+  const {
+    progress,
+    loading: progressLoading,
+    error: progressError,
+    actions,
+    selectors,
+  } = useProgress(courseId);
+
+  // ── Derived values ────────────────────────────────────────────────────────
+  const totalWeeks = curriculum?.weeks.length ?? 0;
+
+  // Count weeks the DB says are completed
+  const completedWeeks =
+    progress?.weeks.filter((w) => w.isCompleted).length ?? 0;
+
+  const overallProgress =
+    totalWeeks > 0 ? Math.round((completedWeeks / totalWeeks) * 100) : 0;
+
+  const remainingWeeks = totalWeeks - completedWeeks;
+
+  const avatarInitial = userData.name
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+
+  // ── Loading state ─────────────────────────────────────────────────────────
   if (!curriculum) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-black via-gray-900 to-green-950">
         <motion.div
           animate={{ opacity: [0.4, 1, 0.4] }}
           transition={{ repeat: Infinity, duration: 1.5 }}
@@ -389,22 +302,25 @@ const displaySubject: string =
     );
   }
 
-  const totalWeeks = curriculum.weeks.length;
-  const overallProgress = Math.round((completedWeeks / totalWeeks) * 100);
-  const remainingWeeks = totalWeeks - completedWeeks;
-  const avatarInitial = userData.name
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
+  // ----------------------------------------------------
+  
+  const currentWeekData =
+    curriculum.weeks.find(
+      (w) => !selectors.getWeekProgress(w.week)?.isCompleted,
+    ) ?? curriculum.weeks[0];
 
+  const currentWeekProgress = selectors.getWeekProgress(
+    currentWeekData?.week ?? 1,
+  );
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen flex bg-gradient-to-br from-black via-gray-900 to-green-950">
-      {/* Sidebar */}
-      <div className="fixed top-0 left-0 h-screen z-40">
+      {/* ── Sidebar ── */}
+      <div className="fixed top-1 left-1 h-screen z-40">
         <Sidebar open={sidebarOpen} setOpen={setSidebarOpen}>
-          <SidebarBody className="flex flex-col h-screen bg-black/90 backdrop-blur border-r border-white/8 p-4">
+          <SidebarBody className="flex flex-col h-screen bg-black/90 backdrop-blur border-r border-white/8 p-4 rounded-lg">
+            {/* Logo */}
             <Link to="/" className="flex items-center gap-3 mb-10 shrink-0">
               <BrainCircuit className="h-5 w-5 text-green-400" />
               {sidebarOpen && (
@@ -418,9 +334,10 @@ const displaySubject: string =
               )}
             </Link>
 
-            <div className="flex-1 flex flex-col gap-1.5 overflow-y-auto overflow-x-hidden">
+            {/* Nav links */}
+            <div className="flex-1 flex flex-col gap-5 overflow-y-auto overflow-x-hidden ">
               {sidebarLinks.map((link, idx) => (
-                <div key={idx} className="relative rounded-lg">
+                <div key={idx} className=" rounded-lg">
                   <GlowingEffect
                     glow
                     disabled={false}
@@ -433,6 +350,7 @@ const displaySubject: string =
               ))}
             </div>
 
+            {/* User profile section */}
             <div className="mt-auto pt-4 border-t border-white/10 shrink-0">
               {sidebarOpen ? (
                 <motion.div
@@ -441,6 +359,7 @@ const displaySubject: string =
                   transition={{ duration: 0.3 }}
                   className="rounded-xl bg-white/5 border border-white/10 p-3 space-y-3"
                 >
+                  {/* Avatar + name */}
                   <div className="flex items-center gap-3">
                     <div className="relative shrink-0">
                       <div className="h-10 w-10 rounded-full bg-gradient-to-br from-green-500 to-emerald-700 flex items-center justify-center text-white text-sm font-bold shadow-[0_0_12px_#16a34a55]">
@@ -460,6 +379,7 @@ const displaySubject: string =
 
                   <div className="border-t border-white/10" />
 
+                  {/* Progress bar */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wider">
@@ -469,6 +389,7 @@ const displaySubject: string =
                         {overallProgress}%
                       </span>
                     </div>
+
                     <div className="h-1.5 w-full bg-white/8 rounded-full overflow-hidden">
                       <motion.div
                         initial={{ width: 0 }}
@@ -481,6 +402,7 @@ const displaySubject: string =
                         className="h-full bg-gradient-to-r from-green-500 to-emerald-400 rounded-full shadow-[0_0_8px_#22c55e88]"
                       />
                     </div>
+
                     <div className="flex justify-between text-[10px] text-gray-600">
                       <span>
                         {completedWeeks} week{completedWeeks !== 1 ? "s" : ""}{" "}
@@ -490,6 +412,7 @@ const displaySubject: string =
                     </div>
                   </div>
 
+                  {/* Mini stats */}
                   <div className="grid grid-cols-2 gap-1.5 pt-1">
                     <div className="rounded-lg bg-white/5 border border-white/8 px-2.5 py-2 text-center">
                       <p className="text-base font-bold text-white">
@@ -510,6 +433,7 @@ const displaySubject: string =
                   </div>
                 </motion.div>
               ) : (
+                /* Collapsed sidebar — avatar + ring only */
                 <div className="flex flex-col items-center gap-2">
                   <div className="relative">
                     <div className="h-9 w-9 rounded-full bg-gradient-to-br from-green-500 to-emerald-700 flex items-center justify-center text-white text-xs font-bold shadow-[0_0_10px_#16a34a44]">
@@ -531,12 +455,13 @@ const displaySubject: string =
         </Sidebar>
       </div>
 
-      {/* Main Content */}
+      {/* ── Main content ── */}
       <motion.main
         className="flex-1 min-h-screen"
         animate={{ marginLeft: sidebarOpen ? 300 : 60 }}
         transition={{ type: "spring", stiffness: 120, damping: 20 }}
       >
+        {/* ── Header ── */}
         <motion.header
           initial={{ opacity: 0, y: -16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -551,7 +476,7 @@ const displaySubject: string =
               <Menu className="h-5 w-5 text-white" />
             </button>
             <div>
-              <p className="text-[17px] text-gray-500 leading-none hidden sm:block">
+              <p className="text-[16px] text-gray-500 leading-none hidden sm:block">
                 Welcome back,{" "}
                 <span className="text-green-400 font-medium">
                   {userData.name}
@@ -561,6 +486,7 @@ const displaySubject: string =
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Stat pills */}
             <div className="hidden md:flex items-center gap-2">
               <StatPill
                 icon={<Target className="h-3 w-3" />}
@@ -576,11 +502,12 @@ const displaySubject: string =
               />
               <StatPill
                 icon={<TrendingUp className="h-3 w-3" />}
-                label="Streak"
-                value="Active"
+                label="Done"
+                value={`${completedWeeks}/${totalWeeks}`}
                 delay={0.5}
               />
             </div>
+
             <Button
               variant="ghost"
               size="icon"
@@ -595,7 +522,9 @@ const displaySubject: string =
           </div>
         </motion.header>
 
+        {/* ── Page body ── */}
         <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-8">
+          {/* Hero card */}
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
@@ -606,15 +535,18 @@ const displaySubject: string =
             <div className="relative">
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
                 <Map className="h-5 w-5 text-green-400" />
-                {displaySubject}
+                {subject}
               </h2>
               <p className="text-sm text-gray-400 mt-1.5 leading-relaxed">
                 Your personalized curriculum is structured into{" "}
                 <span className="text-white font-medium">
                   {totalWeeks} weekly milestones
                 </span>
-                . Follow them step by step to reach your goal faster.
+                . Complete resources, pass the quiz, and submit the project to
+                unlock the next week.
               </p>
+
+              {/* Overall progress bar */}
               <div className="mt-4 flex items-center gap-3">
                 <div className="flex-1 h-1.5 bg-white/8 rounded-full overflow-hidden">
                   <motion.div
@@ -632,13 +564,70 @@ const displaySubject: string =
                   {overallProgress}%
                 </span>
               </div>
+
               <p className="text-[11px] text-gray-600 mt-1">
                 {completedWeeks} of {totalWeeks} weeks completed
               </p>
+
+              {/* Progress loading indicator */}
+              <AnimatePresence>
+                {progressLoading && (
+                  <motion.p
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="text-[11px] text-gray-600 mt-2 flex items-center gap-1.5"
+                  >
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+                    Syncing progress…
+                  </motion.p>
+                )}
+              </AnimatePresence>
+
+              {/* Progress error (non-blocking — UI still works) */}
+              <AnimatePresence>
+                {progressError && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="flex items-center gap-2 mt-2 text-[11px] text-amber-400"
+                  >
+                    <AlertCircle className="h-3 w-3 shrink-0" />
+                    Progress sync unavailable — connect backend to save progress
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </motion.div>
 
+          {/* Completion rules reminder */}
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.2 }}
+            className="flex flex-wrap gap-3 text-[11px] text-gray-500"
+          >
+            <span className="flex items-center gap-2">
+              <span className="h-1.5 w-1.5 rounded-full bg-green-500" />≥ 70%
+              resources read
+            </span>
+            <span className="text-gray-700">·</span>
+            <span className="flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+              Quiz score ≥ 8/10
+            </span>
+            <span className="text-gray-700">·</span>
+            <span className="flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+              Project submitted
+            </span>
+            <span className="text-gray-500 ml-1">= week unlocks next week</span>
+          </motion.div>
+
+          {/* ── Timeline ── */}
           <div className="relative">
+            {/* Vertical connector line */}
             <motion.div
               initial={{ scaleY: 0 }}
               animate={{ scaleY: 1 }}
@@ -646,23 +635,32 @@ const displaySubject: string =
               style={{ transformOrigin: "top" }}
               className="absolute left-5 top-6 bottom-6 w-px bg-gradient-to-b from-green-500/40 via-white/10 to-white/5"
             />
+
             <div className="space-y-6">
               {curriculum.weeks.map((week, index) => (
                 <WeekCard
                   key={week.week}
                   week={week}
                   index={index}
-                  completedWeeks={completedWeeks}
                   subject={subject}
-                  onViewDetails={() =>
-                    navigate(`/week/${week.week}`, { state: { week } })
-                  }
+                  weekProgress={selectors.getWeekProgress(week.week)}
+                  isLocked={selectors.isWeekLocked(week.week)}
+                  actions={actions}
                 />
               ))}
             </div>
           </div>
         </div>
       </motion.main>
+      <ChatWidget
+        courseId={courseId}
+        subject={subject}
+        weekNumber={currentWeekData?.week ?? 1}
+        weekTitle={currentWeekData?.title ?? ""}
+        topics={currentWeekData?.topics ?? []}
+        quizScore={currentWeekProgress?.quiz.bestScore ?? null}
+        quizPassed={currentWeekProgress?.quiz.passed ?? false}
+      />
     </div>
   );
 };

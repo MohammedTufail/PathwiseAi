@@ -6,6 +6,7 @@ from groq import Groq
 
 from learning_system import generate_curriculum, attach_resources
 from quiz_module import generate_quiz, DEFAULT_TOTAL, DEFAULT_DIFFICULTY
+import traceback
 
 load_dotenv()
 
@@ -35,24 +36,24 @@ def generate():
         return jsonify({"error": "Missing subject, level, or goal"}), 400
 
     try:
-        print(f"🚀 Generating curriculum for: {subject} | {level} | {goal}")
+        print(f" Generating curriculum for: {subject} | {level} | {goal}")
         curriculum = generate_curriculum(subject, level, goal)
-        print(f"✅ Curriculum generated with keys: {list(curriculum.keys())}")
+        print(f" Curriculum generated with keys: {list(curriculum.keys())}")
 
         curriculum = attach_resources(curriculum, subject)
-        print("✅ Resources attached successfully")
+        print(" Resources attached successfully")
 
         return jsonify(curriculum)
 
     except Exception as e:
-        print(f"❌ Error: {str(e)}")
+        print(f" Error: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 
 # =====================================================
 # QUIZ GENERATOR ROUTE  (updated)
 # =====================================================
-@app.route("/generate-quiz", methods=["POST"])
+@app.route("/api/generate-quiz", methods=["POST"])
 def quiz():
     data = request.json or {}
 
@@ -70,7 +71,7 @@ def quiz():
         return jsonify({"error": "'total' must be between 1 and 30"}), 400
 
     try:
-        print(f"📝 Generating quiz — subject: {subject!r} | topics: {topics} | "
+        print(f" Generating quiz — subject: {subject!r} | topics: {topics} | "
               f"total: {total} | difficulty: {difficulty!r}")
 
         result = generate_quiz(
@@ -81,14 +82,15 @@ def quiz():
             difficulty=difficulty,
         )
 
-        print(f"✅ Quiz ready — {result.meta.total_questions} questions")
+        print(f" Quiz ready — {result.meta.total_questions} questions")
         return jsonify(result.to_dict())
 
     except Exception as e:
-        print(f"❌ Quiz generation error: {e}")
+        print(" FULL ERROR TRACE:")
+        traceback.print_exc() 
         return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(debug=False, host="0.0.0.0", port=port)
+    port = int(os.environ.get("PORT", 5001))
+    app.run(debug=False, host="0.0.0.0", port=5001)

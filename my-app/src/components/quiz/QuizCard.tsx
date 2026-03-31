@@ -1,7 +1,5 @@
-// ─── components/quiz/QuizCard.tsx ────────────────────────────────────────────
 // Renders a single quiz question — options, submit, explanation reveal.
 // Fully self-contained; parent tracks answerState.
-// ─────────────────────────────────────────────────────────────────────────────
 
 import { motion, AnimatePresence } from "framer-motion";
 import {

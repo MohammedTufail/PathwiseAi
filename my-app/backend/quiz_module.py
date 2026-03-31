@@ -23,9 +23,6 @@ from typing import Any
 
 from groq import Groq
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 MAX_RETRIES = 3
 DEFAULT_TOTAL = 10         # questions per quiz call
@@ -39,9 +36,7 @@ QTYPE_WEIGHTS = {"mcq": 0.65, "true_false": 0.20, "scenario": 0.15}
 
 VALID_ANSWER_LETTERS = {"A", "B", "C", "D"}
 
-# ---------------------------------------------------------------------------
 # Dataclasses
-# ---------------------------------------------------------------------------
 
 @dataclass
 class QuizQuestion:
@@ -53,7 +48,6 @@ class QuizQuestion:
     difficulty: str            # easy | medium | hard
     question_type: str         # mcq | true_false | scenario
 
-
 @dataclass
 class QuizMeta:
     subject: str
@@ -63,7 +57,6 @@ class QuizMeta:
     difficulty_distribution: dict[str, int]   # {"easy": 3, "medium": 5, "hard": 2}
     type_distribution: dict[str, int]          # {"mcq": 7, "true_false": 2, "scenario": 1}
     generated_at: float = field(default_factory=time.time)
-
 
 @dataclass
 class QuizResult:
@@ -77,10 +70,8 @@ class QuizResult:
             "meta": asdict(self.meta),
         }
 
-
 # ---------------------------------------------------------------------------
 # Prompt builders
-# ---------------------------------------------------------------------------
 
 def _difficulty_instruction(difficulty: str) -> str:
     """Return the difficulty-specific sub-instruction for the prompt."""
@@ -172,10 +163,8 @@ Rules:
 5. Output valid JSON only. No extra keys. No trailing commas.
 """
 
-
 # ---------------------------------------------------------------------------
 # LLM caller (reuses the shared Groq client passed in)
-# ---------------------------------------------------------------------------
 
 def _call_groq(client: Groq, prompt: str) -> str:
     completion = client.chat.completions.create(
@@ -283,10 +272,8 @@ def _validate_question(q: dict, question_type: str) -> QuizQuestion:
         question_type=qtype,
     )
 
-
 # ---------------------------------------------------------------------------
 # Slot planner
-# ---------------------------------------------------------------------------
 
 def _plan_slots(
     topics: list[str],
@@ -339,10 +326,8 @@ def _plan_slots(
 
     return list(slot_map.values())
 
-
 # ---------------------------------------------------------------------------
 # Core generator
-# ---------------------------------------------------------------------------
 
 def generate_quiz(
     client: Groq,
@@ -391,13 +376,13 @@ def generate_quiz(
                     try:
                         validated = _validate_question(rq, slot_type)
                     except ValueError as ve:
-                        print(f"  ⚠️  Skipping malformed question: {ve}")
+                        print(f"  Skipping malformed question: {ve}")
                         continue
 
                     # Deduplicate by normalised question text
                     norm = re.sub(r"\s+", " ", validated.question.lower())
                     if norm in seen_questions:
-                        print(f"  ⚠️  Duplicate skipped: {validated.question[:60]}…")
+                        print(f"   Duplicate skipped: {validated.question[:60]}…")
                         continue
 
                     seen_questions.add(norm)
@@ -406,9 +391,9 @@ def generate_quiz(
                 break  # slot succeeded — move to next
 
             except (ValueError, Exception) as exc:
-                print(f"  ❌ Slot [{slot_topic}/{slot_diff}/{slot_type}] attempt {attempt}/{MAX_RETRIES} failed: {exc}")
+                print(f"  Slot [{slot_topic}/{slot_diff}/{slot_type}] attempt {attempt}/{MAX_RETRIES} failed: {exc}")
                 if attempt == MAX_RETRIES:
-                    print(f"  ⛔ Giving up on slot after {MAX_RETRIES} retries.")
+                    print(f"  Giving up on slot after {MAX_RETRIES} retries.")
                 else:
                     time.sleep(0.5 * attempt)   # brief back-off
 
@@ -433,7 +418,7 @@ def generate_quiz(
     )
 
     print(
-        f"✅ Quiz complete — {len(all_questions)} questions | "
+        f" Quiz complete — {len(all_questions)} questions | "
         f"diff: {diff_dist} | types: {type_dist}"
     )
     return QuizResult(quiz=all_questions, meta=meta)

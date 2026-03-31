@@ -1,0 +1,299 @@
+// components/progress/WeekCard.tsx
+// ─────────────────────────────────────────────────────────────────────────────
+// Progress-aware week card. Integrates:
+//   - WeekProgressBar  (3-pill summary)
+//   - ResourceList     (articles per topic)
+//   - QuizStatus       (quiz score + Take Quiz button)
+//   - ProjectSection   (mark done + github)
+//
+// Props:
+//   week         — curriculum week data (from LearningPath)
+//   subject      — for QuizModal
+//   weekProgress — from useProgress (may be undefined before first activity)
+//   isLocked     — greys out and disables all interactions
+//   actions      — from useProgress hook
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { motion, useInView, AnimatePresence } from "framer-motion";
+import {
+  Calendar,
+  CheckCircle2,
+  Lock,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
+import { Button } from "../button";
+import { GlowingEffect } from "../ui/glowing-effect";
+import WeekProgressBar from "./WeekProgressBar";
+import ResourceList from "./ResourceList";
+import QuizStatus from "./QuizStatus";
+import ProjectSection from "./ProjectSection";
+import type { WeekProgress } from "../../api/progressApi";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface ResourceItem {
+  title?: string;
+  url: string;
+  name?: string;
+  stars?: number;
+}
+
+interface WeekData {
+  week: number;
+  title: string;
+  topics: string[];
+  project: string;
+  resources?: {
+    [topic: string]: {
+      videos: ResourceItem[];
+      repos: ResourceItem[];
+    };
+  };
+}
+
+interface ProgressActions {
+  openResource: (weekNumber: number, resourceId: string, url: string) => void;
+  saveQuizScore: (weekNumber: number, score: number) => Promise<unknown>;
+  completeProject: (
+    weekNumber: number,
+    githubLink?: string,
+  ) => Promise<unknown>;
+}
+
+interface Props {
+  week: WeekData;
+  index: number;
+  subject: string;
+  weekProgress: WeekProgress | undefined;
+  isLocked: boolean;
+  actions: ProgressActions;
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
+export default function WeekCard({
+  week,
+  index,
+  subject,
+  weekProgress,
+  isLocked,
+  actions,
+}: Props) {
+  const ref = useRef(null);
+  const inView = useInView(ref, { once: true, margin: "-60px" });
+  const navigate = useNavigate();
+  const [expanded, setExpanded] = useState(false);
+
+  // Count total resources across all topics for this week
+  const totalResources = week.topics.reduce((sum, topic) => {
+    const t = week.resources?.[topic];
+    return sum + (t?.videos.length ?? 0) + (t?.repos.length ?? 0);
+  }, 0);
+
+  // IDs of completed resources (from DB)
+  const completedResourceIds =
+    weekProgress?.resources
+      .filter((r) => r.completed)
+      .map((r) => r.resourceId) ?? [];
+
+  return (
+    <motion.div
+      ref={ref}
+      initial={{ opacity: 0, x: -24 }}
+      animate={inView ? { opacity: 1, x: 0 } : {}}
+      transition={{
+        duration: 0.5,
+        delay: index * 0.07,
+        ease: [0.25, 0.46, 0.45, 0.94],
+      }}
+      className="relative"
+    >
+      {/* Timeline dot */}
+      <div className="absolute left-4 top-8 z-10">
+        {weekProgress?.isCompleted ? (
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            className="w-2.5 h-2.5 rounded-full bg-green-500 border-2 border-green-500 shadow-[0_0_8px_#22c55e]"
+          />
+        ) : isLocked ? (
+          <div className="w-2.5 h-2.5 rounded-full bg-black border-2 border-white/15" />
+        ) : (
+          <motion.div
+            animate={{ scale: [1, 1.3, 1], opacity: [1, 0.6, 1] }}
+            transition={{ repeat: Infinity, duration: 2 }}
+            className="w-2.5 h-2.5 rounded-full bg-green-400 border-2 border-green-400 shadow-[0_0_12px_#4ade80]"
+          />
+        )}
+      </div>
+
+      {/* Card */}
+      <div
+        className={`ml-10 relative rounded-2xl p-[1px] transition-all duration-500 ${
+          isLocked
+            ? "bg-gradient-to-r from-white/5 via-white/8 to-white/5"
+            : "bg-gradient-to-r from-white/10 via-white/20 to-white/10 hover:from-green-500/20 hover:via-white/20 hover:to-green-500/10"
+        }`}
+      >
+        {!isLocked && (
+          <GlowingEffect
+            spread={60}
+            glow
+            disabled={false}
+            proximity={80}
+            inactiveZone={0.05}
+          />
+        )}
+
+        <div
+          className={`relative rounded-2xl bg-gradient-to-br from-black via-gray-900/90 to-black p-5 border transition-all duration-300 ${
+            isLocked
+              ? "border-white/5 opacity-50 pointer-events-none select-none"
+              : "border-white/8 hover:border-green-400/20"
+          }`}
+        >
+          {/* Locked overlay */}
+          {isLocked && (
+            <div className="absolute inset-0 rounded-2xl flex items-center justify-center bg-black/20 z-10">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 border border-white/10 text-gray-500 text-xs font-semibold">
+                <Lock className="h-3 w-3" />
+                Complete week {week.week - 1} to unlock
+              </div>
+            </div>
+          )}
+
+          {/* Header */}
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              {weekProgress?.isCompleted && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-green-500/10 border border-green-500/25 text-green-400 text-[10px] font-bold uppercase tracking-wider mb-2"
+                >
+                  <CheckCircle2 className="h-3 w-3" />
+                  Done
+                </motion.div>
+              )}
+
+              <p className="text-xs text-gray-500 flex items-center gap-1.5 font-medium tracking-widest uppercase">
+                <Calendar className="h-3.5 w-3.5 text-green-400" />
+                Week {week.week}
+              </p>
+              <h3 className="text-base font-bold text-white mt-1">
+                {week.title}
+              </h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Project:{" "}
+                <span className="text-green-400 font-medium">
+                  {week.project}
+                </span>
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                onClick={() =>
+                  navigate(`/week/${week.week}`, { state: { week } })
+                }
+                className="rounded-xl bg-green-600 hover:bg-green-500 shadow-[0_0_8px_#16a34a] text-xs font-semibold"
+              >
+                View Details
+              </Button>
+              <button
+                onClick={() => setExpanded((v) => !v)}
+                className="p-2 rounded-xl border border-white/10 hover:bg-white/5 text-gray-400 hover:text-white transition-all"
+                title={expanded ? "Collapse" : "Expand progress"}
+              >
+                {expanded ? (
+                  <ChevronUp className="h-4 w-4" />
+                ) : (
+                  <ChevronDown className="h-4 w-4" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Progress bar pills (always visible) */}
+          <WeekProgressBar
+            weekProgress={weekProgress}
+            totalResources={totalResources}
+          />
+
+          {/* Expanded section: resources + quiz + project */}
+          <AnimatePresence>
+            {expanded && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.3, ease: "easeInOut" }}
+                className="overflow-hidden"
+              >
+                <div className="mt-5 pt-5 border-t border-white/8 space-y-5">
+                  {/* Resources per topic */}
+                  {week.topics.map((topic, ti) => {
+                    const res = week.resources?.[topic];
+                    if (!res) return null;
+                    return (
+                      <div key={topic}>
+                        <p className="text-xs font-semibold text-white mb-1">
+                          {topic}
+                        </p>
+                        <ResourceList
+                          weekNumber={week.week}
+                          topicIndex={ti}
+                          topicName={topic}
+                          videos={res.videos.map((v) => ({
+                            title: v.title ?? "",
+                            url: v.url,
+                          }))}
+                          repos={res.repos.map((r) => ({
+                            name: r.name ?? "",
+                            url: r.url,
+                            stars: r.stars ?? 0,
+                          }))}
+                          completedResourceIds={completedResourceIds}
+                          onOpen={(resourceId, url) =>
+                            actions.openResource(week.week, resourceId, url)
+                          }
+                        />
+                      </div>
+                    );
+                  })}
+
+                  {/* Quiz */}
+                  <QuizStatus
+                    weekNumber={week.week}
+                    weekTitle={week.title}
+                    subject={subject}
+                    topics={week.topics}
+                    quiz={weekProgress?.quiz}
+                    onScoreSaved={(score) =>
+                      actions.saveQuizScore(week.week, score) as Promise<void>
+                    }
+                  />
+
+                  {/* Project */}
+                  <ProjectSection
+                    project={weekProgress?.project}
+                    projectTitle={week.project}
+                    onMarkDone={(githubLink) =>
+                      actions.completeProject(
+                        week.week,
+                        githubLink,
+                      ) as Promise<void>
+                    }
+                  />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+    </motion.div>
+  );
+}

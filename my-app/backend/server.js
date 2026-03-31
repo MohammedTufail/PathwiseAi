@@ -1,3 +1,4 @@
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const { spawn } = require("child_process");
@@ -8,18 +9,19 @@ const jwt = require("jsonwebtoken");
 const User = require("./models/User");
 
 const app = express();
+const progressRoutes = require("./routes/progressRoutes");
+const chatRoutes = require("./routes/chatRoutes");
 
 // -----------------------------
 // Hardcoded configuration
 // -----------------------------
 const PORT = 5000;
-const MONGO_URI =
-  "mongodb://hyderabadwalamohammed_db_user:Hyderabadwala17@ac-2z6ppyt-shard-00-00.x63gaae.mongodb.net:27017,ac-2z6ppyt-shard-00-01.x63gaae.mongodb.net:27017,ac-2z6ppyt-shard-00-02.x63gaae.mongodb.net:27017/?ssl=true&replicaSet=atlas-9l8yhc-shard-0&authSource=admin&appName=Cluster0";
-const JWT_SECRET = "supersecretkey123"; // choose a strong secret
+const MONGO_URI = process.env.MONGO_URI;
+const JWT_SECRET = process.env.JWT_SECRET; // choose a strong secret
 
 app.use(cors());
 app.use(express.json());
-
+app.use("/api/chat", require("./routes/chatRoutes"));
 // ===============================
 // MongoDB Connection
 // ===============================
@@ -36,6 +38,10 @@ async function connectDB() {
 
 connectDB();
 mongoose.set("debug", true); // optional: logs all queries
+
+app.use("/api/chat", chatRoutes); // NEW
+
+app.use("/api/progress", progressRoutes);
 
 // ===============================
 // Health Check
@@ -94,36 +100,92 @@ app.post("/api/login", async (req, res) => {
 });
 
 // ===============================
-// AI Generate Route
+// Middleware: Auth routes
 // ===============================
-app.post("/api/generate", async (req, res) => {
+const authMiddleware = (req, res, next) => {
   try {
-    const py = spawn("python", ["backend/learning_system.py"]);
+    const token = req.headers.authorization?.split(" ")[1];
 
-    let data = "";
-    let error = "";
+    if (!token)
+      return res.status(401).json({ message: "No token, unauthorized" });
 
-    py.stdin.write(JSON.stringify(req.body));
-    py.stdin.end();
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
 
-    py.stdout.on("data", (chunk) => (data += chunk.toString()));
-    py.stderr.on("data", (err) => (error += err.toString()));
+    next();
+  } catch (err) {
+    return res.status(401).json({ message: "Invalid token" });
+  }
+};
 
-    py.on("close", (code) => {
-      if (error) {
-        console.error("Python Error:", error);
-        return res.status(500).json({ error });
-      }
-
-      try {
-        const parsed = JSON.parse(data);
-        res.json(parsed);
-      } catch {
-        res.json({ output: data });
-      }
+// ===============================
+// AI Generate Route (Flask)
+// ===============================
+app.post("/api/generate", authMiddleware, async (req, res) => {
+  try {
+    const response = await fetch("http://localhost:5001/api/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(req.body),
     });
+
+    const text = await response.text();
+
+    try {
+      const data = JSON.parse(text);
+      res.json(data);
+    } catch {
+      console.error(" Invalid JSON from Flask:", text);
+      res.status(500).json({
+        error: "Invalid response from AI server",
+      });
+    }
   } catch (err) {
     console.error("Generate Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===============================
+// Quiz Route (Flask)
+// ===============================
+app.post("/api/generate-quiz", authMiddleware, async (req, res) => {
+  try {
+    const response = await fetch("http://localhost:5001/api/generate-quiz", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(req.body),
+    });
+
+    const text = await response.text();
+
+    try {
+      const data = JSON.parse(text);
+      res.json(data);
+    } catch {
+      console.error(" Invalid JSON from Flask:", text);
+      res.status(500).json({
+        error: "Invalid response from AI server",
+      });
+    }
+  } catch (err) {
+    console.error("Quiz Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===============================
+// Protected Test Route
+// ===============================
+app.get("/api/profile", authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select("-password");
+    res.json(user);
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

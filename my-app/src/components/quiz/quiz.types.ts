@@ -1,7 +1,6 @@
-// ─── quiz.types.ts ───────────────────────────────────────────────────────────
 // Shared types for the entire quiz component family.
 // Mirror the shape returned by the backend QuizResult.to_dict()
-// ─────────────────────────────────────────────────────────────────────────────
+
 
 export type QuestionType = "mcq" | "true_false" | "scenario";
 export type Difficulty = "easy" | "medium" | "hard";

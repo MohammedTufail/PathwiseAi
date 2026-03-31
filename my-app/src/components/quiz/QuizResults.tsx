@@ -1,7 +1,5 @@
-// ─── components/quiz/QuizResults.tsx ─────────────────────────────────────────
 // Shown after the last question — score ring, per-difficulty breakdown,
 // pass/fail message, and action buttons.
-// ─────────────────────────────────────────────────────────────────────────────
 
 import { motion } from "framer-motion";
 import {
@@ -10,7 +8,6 @@ import {
   X,
   CheckCircle2,
   XCircle,
-  Minus,
 } from "lucide-react";
 import { Button } from "../button";
 import ProgressRing from "../ProgressRing";
