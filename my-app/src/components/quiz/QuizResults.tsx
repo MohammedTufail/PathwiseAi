@@ -1,5 +1,12 @@
-// Shown after the last question — score ring, per-difficulty breakdown,
-// pass/fail message, and action buttons.
+// frontend/src/components/quiz/QuizResults.tsx  (v2)
+// ─────────────────────────────────────────────────────────────────────────────
+// Shows:
+//   - Score ring
+//   - Per-topic accuracy bars (NEW)
+//   - Weak topics list with "Practice weak topics" button (NEW)
+//   - Per-question review list
+//   - Retry / Close actions
+// ─────────────────────────────────────────────────────────────────────────────
 
 import { motion } from "framer-motion";
 import {
@@ -8,107 +15,117 @@ import {
   X,
   CheckCircle2,
   XCircle,
+  Target,
+  AlertTriangle,
+  TrendingUp,
 } from "lucide-react";
 import { Button } from "../button";
 import ProgressRing from "../ProgressRing";
-import type { QuizQuestion, AnswerState, Difficulty } from "./quiz.types";
+import type { QuizQuestion, AttemptResult, TopicStat } from "../../api/quizApi";
+import type { AnswerState } from "../../hooks/useQuiz";
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const DIFF_ORDER: Difficulty[] = ["easy", "medium", "hard"];
-
-const diffLabel: Record<Difficulty, string> = {
-  easy: "Easy",
-  medium: "Medium",
-  hard: "Hard",
-};
-
-const diffColor: Record<Difficulty, { bar: string; text: string }> = {
-  easy: { bar: "bg-green-500", text: "text-green-400" },
-  medium: { bar: "bg-yellow-500", text: "text-yellow-400" },
-  hard: { bar: "bg-red-500", text: "text-red-400" },
-};
-
-function getPassMessage(pct: number): { title: string; sub: string } {
+function getPassMessage(pct: number) {
   if (pct === 100)
-    return { title: "Perfect score! 🎯", sub: "You've mastered this topic." };
+    return { title: "Perfect score!", sub: "You've mastered this week." };
   if (pct >= 80)
-    return {
-      title: "Excellent work!",
-      sub: "You have a strong grasp of the material.",
-    };
+    return { title: "Excellent work!", sub: "Strong grasp of the material." };
   if (pct >= 60)
     return {
       title: "Good effort!",
-      sub: "A little more practice and you'll nail it.",
-    };
-  if (pct >= 40)
-    return {
-      title: "Keep going!",
-      sub: "Review the explanations and try again.",
+      sub: "A bit more practice and you'll nail it.",
     };
   return {
-    title: "Needs more practice.",
-    sub: "Don't worry — revisit the topics and retry.",
+    title: "Keep going!",
+    sub: "Review the weak topics below and retry.",
   };
 }
 
-// ─── component ───────────────────────────────────────────────────────────────
+// ─── TopicBar ─────────────────────────────────────────────────────────────────
+
+const TopicBar = ({ stat, index }: { stat: TopicStat; index: number }) => {
+  const pct = Math.round(stat.accuracy * 100);
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -8 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: 0.1 + index * 0.06 }}
+      className="space-y-1"
+    >
+      <div className="flex items-center justify-between text-xs">
+        <span
+          className={`font-medium truncate max-w-[160px] ${stat.isWeak ? "text-amber-400" : "text-gray-300"}`}
+        >
+          {stat.isWeak && (
+            <AlertTriangle className="inline h-3 w-3 mr-1 text-amber-400" />
+          )}
+          {stat.topic}
+        </span>
+        <span
+          className={`font-bold shrink-0 ml-2 ${stat.isWeak ? "text-amber-400" : "text-green-400"}`}
+        >
+          {stat.correct}/{stat.total} ({pct}%)
+        </span>
+      </div>
+      <div className="h-1.5 w-full bg-white/8 rounded-full overflow-hidden">
+        <motion.div
+          initial={{ width: 0 }}
+          animate={{ width: `${pct}%` }}
+          transition={{
+            duration: 0.7,
+            ease: "easeOut",
+            delay: 0.15 + index * 0.06,
+          }}
+          className={`h-full rounded-full ${stat.isWeak ? "bg-amber-500" : "bg-green-500"}`}
+        />
+      </div>
+    </motion.div>
+  );
+};
+
+// ─── Props ────────────────────────────────────────────────────────────────────
 
 interface Props {
   questions: QuizQuestion[];
   answers: AnswerState[];
   weekTitle: string;
+  attemptResult: AttemptResult | null;
+  isFocused?: boolean; // true when showing focused mini-quiz results
   onRetry: () => void;
+  onFocused: (weakTopics: string[]) => void;
   onClose: () => void;
 }
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function QuizResults({
   questions,
   answers,
   weekTitle,
+  attemptResult,
+  isFocused = false,
   onRetry,
+  onFocused,
   onClose,
 }: Props) {
   const total = questions.length;
   const correct = answers.filter((a) => a.correct).length;
   const pct = total > 0 ? Math.round((correct / total) * 100) : 0;
   const msg = getPassMessage(pct);
-
-  // Per-difficulty stats
-  const diffStats = DIFF_ORDER.map((diff) => {
-    const qs = questions
-      .map((q, i) => ({ q, a: answers[i] }))
-      .filter(({ q }) => q.difficulty === diff);
-    const tot = qs.length;
-    const cor = qs.filter(({ a }) => a.correct).length;
-    return {
-      diff,
-      total: tot,
-      correct: cor,
-      pct: tot > 0 ? Math.round((cor / tot) * 100) : 0,
-    };
-  }).filter((s) => s.total > 0);
-
-  // Per-question summary rows
-  const rows = questions.map((q, i) => ({
-    index: i,
-    question: q.question,
-    topic: q.topic,
-    correct: answers[i]?.correct ?? false,
-    selected: answers[i]?.selected ?? "-",
-    answer: q.answer,
-  }));
+  const topicStats = attemptResult?.topicStats ?? [];
+  const weakTopics = attemptResult?.weakTopics ?? [];
+  const hasWeak = weakTopics.length > 0 && !isFocused;
 
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.97 }}
       animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.4, ease: [0.25, 0.46, 0.45, 0.94] }}
-      className="flex flex-col gap-6"
+      transition={{ duration: 0.4 }}
+      className="flex flex-col gap-5"
     >
-      {/* ── Hero: ring + message ── */}
-      <div className="flex flex-col sm:flex-row items-center gap-6 p-5 rounded-2xl border border-white/10 bg-white/3">
+      {/* ── Score hero ── */}
+      <div className="flex flex-col sm:flex-row items-center gap-5 p-5 rounded-2xl border border-white/10 bg-white/3">
         <div className="relative shrink-0">
           <ProgressRing
             progress={pct}
@@ -129,7 +146,7 @@ export default function QuizResults({
           <div className="flex items-center gap-2 justify-center sm:justify-start mb-1">
             <Trophy className="h-4 w-4 text-yellow-400" />
             <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold">
-              {weekTitle}
+              {isFocused ? "Focused Practice" : weekTitle}
             </p>
           </div>
           <h3 className="text-xl font-bold text-white">{msg.title}</h3>
@@ -137,54 +154,73 @@ export default function QuizResults({
           <p className="text-sm text-gray-300 mt-2">
             <span className="text-green-400 font-bold">{correct}</span>
             <span className="text-gray-500"> / {total} correct</span>
+            {attemptResult?.passed && (
+              <span className="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-green-500/15 border border-green-500/25 text-green-400 font-bold">
+                PASSED
+              </span>
+            )}
           </p>
+          {attemptResult && !isFocused && (
+            <p className="text-[11px] text-gray-600 mt-1">
+              Best score: {attemptResult.bestScore}/{total}
+            </p>
+          )}
         </div>
       </div>
 
-      {/* ── Difficulty breakdown ── */}
-      {diffStats.length > 1 && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {diffStats.map(({ diff, total: tot, correct: cor, pct: dp }) => (
-            <motion.div
-              key={diff}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: DIFF_ORDER.indexOf(diff) * 0.08 }}
-              className="p-3 rounded-xl border border-white/10 bg-white/3 space-y-2"
-            >
-              <div className="flex justify-between items-center">
-                <span
-                  className={`text-xs font-semibold uppercase tracking-wider ${diffColor[diff].text}`}
-                >
-                  {diffLabel[diff]}
-                </span>
-                <span className="text-xs text-gray-400">
-                  {cor}/{tot}
-                </span>
-              </div>
-              <div className="h-1.5 w-full bg-white/8 rounded-full overflow-hidden">
-                <motion.div
-                  initial={{ width: 0 }}
-                  animate={{ width: `${dp}%` }}
-                  transition={{ duration: 0.8, ease: "easeOut", delay: 0.3 }}
-                  className={`h-full rounded-full ${diffColor[diff].bar}`}
-                />
-              </div>
-              <p className="text-xs text-gray-500 text-right">{dp}%</p>
-            </motion.div>
+      {/* ── Topic breakdown ── */}
+      {topicStats.length > 0 && (
+        <div className="rounded-xl border border-white/10 p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-3.5 w-3.5 text-green-400" />
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest">
+              Topic breakdown
+            </p>
+          </div>
+          {topicStats.map((stat, i) => (
+            <TopicBar key={stat.topic} stat={stat} index={i} />
           ))}
         </div>
       )}
 
-      {/* ── Per-question review list ── */}
+      {/* ── Weak topics banner + focused quiz button ── */}
+      {hasWeak && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="rounded-xl border border-amber-500/25 bg-amber-500/8 p-4"
+        >
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-amber-300">
+                Weak topics found
+              </p>
+              <p className="text-xs text-amber-400/70 mt-0.5">
+                You scored below 60% on: {weakTopics.join(", ")}
+              </p>
+            </div>
+          </div>
+          <Button
+            onClick={() => onFocused(weakTopics)}
+            className="mt-3 w-full rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-300 hover:text-amber-200 text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-2"
+          >
+            <Target className="h-4 w-4" />
+            Practice weak topics only
+          </Button>
+        </motion.div>
+      )}
+
+      {/* ── Question review list ── */}
       <div className="rounded-xl border border-white/10 overflow-hidden">
         <div className="px-4 py-2.5 border-b border-white/10 bg-white/3">
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest">
-            Question Review
+            Question review
           </p>
         </div>
-        <div className="divide-y divide-white/5 max-h-64 overflow-y-auto">
-          {rows.map((row, i) => (
+        <div className="divide-y divide-white/5 max-h-56 overflow-y-auto">
+          {questions.map((q, i) => (
             <motion.div
               key={i}
               initial={{ opacity: 0 }}
@@ -192,33 +228,33 @@ export default function QuizResults({
               transition={{ delay: i * 0.03 }}
               className="flex items-start gap-3 px-4 py-3"
             >
-              {row.correct ? (
+              {answers[i]?.correct ? (
                 <CheckCircle2 className="shrink-0 h-4 w-4 text-green-400 mt-0.5" />
               ) : (
                 <XCircle className="shrink-0 h-4 w-4 text-red-400 mt-0.5" />
               )}
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-300 truncate leading-snug">
-                  {row.question}
+                  {q.question}
                 </p>
-                <p className="text-[11px] text-gray-500 mt-0.5">
-                  {row.correct ? (
+                <p className="text-[11px] mt-0.5">
+                  {answers[i]?.correct ? (
                     <span className="text-green-400">Correct</span>
                   ) : (
                     <>
                       <span className="text-red-400">
-                        Your answer: {row.selected}
+                        Your answer: {answers[i]?.selected ?? "—"}
                       </span>
                       <span className="text-gray-600"> · </span>
                       <span className="text-green-400">
-                        Correct: {row.answer}
+                        Correct: {q.answer}
                       </span>
                     </>
                   )}
                 </p>
               </div>
               <span className="shrink-0 text-[10px] text-green-400 bg-green-500/10 border border-green-500/20 px-1.5 py-0.5 rounded-full truncate max-w-[80px]">
-                {row.topic}
+                {q.topic}
               </span>
             </motion.div>
           ))}
@@ -237,10 +273,10 @@ export default function QuizResults({
         </Button>
         <Button
           onClick={onRetry}
-          className="flex items-center gap-2 rounded-xl bg-green-600 hover:bg-green-500 shadow-[0_0_10px_#16a34a] hover:shadow-[0_0_18px_#22c55e] transition-all duration-300 font-semibold"
+          className="flex items-center gap-2 rounded-xl bg-green-600 hover:bg-green-500 shadow-[0_0_10px_#16a34a] font-semibold"
         >
           <RotateCcw className="h-4 w-4" />
-          Retry Quiz
+          {isFocused ? "Retry focused" : "Retry quiz"}
         </Button>
       </div>
     </motion.div>

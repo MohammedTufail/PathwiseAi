@@ -131,54 +131,100 @@ const markResource = async (req, res) => {
 //    Saves a quiz attempt. Stores BEST score only. Once passed, stays passed.
 //    Body: { weekNumber: Number, score: Number }  (score is out of 10)
 // =============================================================================
+// =============================================================================
+// 3. POST /api/progress/:courseId/quiz
+// Saves a quiz attempt. Stores BEST score only. Once passed, stays passed.
+// Body: { weekNumber: Number, score: Number }
+// =============================================================================
+
 const submitQuizScore = async (req, res) => {
   try {
     const { courseId } = req.params;
     const { weekNumber, score } = req.body;
 
+    // ── Validation ──────────────────────────────────────────────────────────
     if (weekNumber == null || score == null) {
-      return res
-        .status(400)
-        .json({ success: false, message: "weekNumber and score required" });
+      return res.status(400).json({
+        success: false,
+        message: "weekNumber and score required",
+      });
     }
 
     const numericScore = Number(score);
+
     if (numericScore < 0 || numericScore > 10) {
-      return res
-        .status(400)
-        .json({ success: false, message: "score must be 0–10" });
+      return res.status(400).json({
+        success: false,
+        message: "score must be 0–10",
+      });
     }
 
+    // ── Get or create progress ──────────────────────────────────────────────
     let progress = await UserProgress.findOneAndUpdate(
       { userId: req.userId, courseId },
-      { $setOnInsert: { userId: req.userId, courseId, weeks: [] } },
-      { upsert: true, new: true },
+      {
+        $setOnInsert: {
+          userId: req.userId,
+          courseId,
+          weeks: [],
+        },
+      },
+      {
+        upsert: true,
+        returnDocument: "after", // ✅ fixed (no deprecated warning)
+      }
     );
 
+    // ── Ensure week exists ──────────────────────────────────────────────────
     const week = ensureWeek(progress, Number(weekNumber));
 
-    // ── Quiz rules ──────────────────────────────────────────────────────────
-    // bestScore: keep the highest score ever
-    week.quiz.bestScore = Math.max(week.quiz.bestScore || 0, numericScore);
+    // ── Create attempt object (IMPORTANT FIX) ───────────────────────────────
+    const attempt = {
+      score: numericScore,
+      total: 10,
+      attemptedAt: new Date(),
+    };
 
-    // passed: once true, never goes back to false
+    // ── Quiz rules ──────────────────────────────────────────────────────────
+
+    // 1. Best score (never decreases)
+    week.quiz.bestScore = Math.max(
+      week.quiz.bestScore || 0,
+      numericScore
+    );
+
+    // 2. Passed (once true, always true)
     if (!week.quiz.passed && numericScore >= PASS_SCORE) {
       week.quiz.passed = true;
     }
 
-    week.quiz.attempts = (week.quiz.attempts || 0) + 1;
-    week.quiz.lastAttemptAt = new Date();
+    // 3. Store attempts as ARRAY (FIXED)
+    if (!Array.isArray(week.quiz.attempts)) {
+      week.quiz.attempts = [];
+    }
 
+    week.quiz.attempts.push(attempt);
+
+    // 4. Last attempt timestamp
+    week.quiz.lastAttemptAt = attempt.attemptedAt;
+
+    // ── Save progress ───────────────────────────────────────────────────────
     await checkAndSave(progress);
-    res.json({ success: true, data: progress });
+
+    res.json({
+      success: true,
+      data: progress,
+    });
+
   } catch (err) {
     console.error("[submitQuizScore]", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to save quiz score" });
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to save quiz score",
+    });
   }
 };
-
 // =============================================================================
 // 4. POST /api/progress/:courseId/project
 //    Marks the project as done and optionally saves a GitHub link.

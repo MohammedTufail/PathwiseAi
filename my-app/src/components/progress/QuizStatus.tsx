@@ -13,6 +13,7 @@ import QuizModal from "../quiz/QuizModal";
 import type { QuizProgress } from "../../api/progressApi";
 
 interface Props {
+  courseId: string; // ✅ ADD THIS
   weekNumber: number;
   weekTitle: string;
   subject: string;
@@ -33,6 +34,7 @@ export default function QuizStatus({
   const bestScore = quiz?.bestScore ?? 0;
   const attempts = quiz?.attempts ?? 0;
 
+  
   return (
     <div className="flex items-center justify-between gap-3 mt-4 p-3 rounded-xl border border-white/8 bg-white/3">
       <div className="flex items-center gap-2">
@@ -82,12 +84,14 @@ export default function QuizStatus({
 
       {/* QuizModal trigger — passes onComplete so score gets saved */}
       <QuizModal
+        courseId={subject} // ⚠️ TEMP (see below)
+        weekNumber={weekNumber}
         subject={subject}
         topics={topics}
         weekTitle={weekTitle}
         difficulty="mixed"
         total={10}
-        onComplete={onScoreSaved} // ← Add this prop to QuizModal
+        onComplete={onScoreSaved}
       />
     </div>
   );

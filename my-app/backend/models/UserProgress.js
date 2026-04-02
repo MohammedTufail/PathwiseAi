@@ -1,16 +1,19 @@
-// models/UserProgress.js
+// backend/models/UserProgress.js  (updated)
 // ─────────────────────────────────────────────────────────────────────────────
-// Single document per (userId + courseId) pair.
-// All week progress is stored as an embedded array so one DB read loads
-// everything the frontend needs for a full course view.
+// Changes from v1:
+//   - QuizSchema now has an `attempts` array instead of a flat score
+//   - Each attempt stores per-question results (questionIndex + correct)
+//   - bestScore and passed are STILL kept as top-level fields for fast
+//     week-completion checks (no need to iterate attempts for that)
+//   - Topic analysis is derived from attempts at read time — not stored
 // ─────────────────────────────────────────────────────────────────────────────
 
 const mongoose = require("mongoose");
 
-// ── Resource (article / video link) ──────────────────────────────────────────
+// ── Resource ──────────────────────────────────────────────────────────────────
 const ResourceSchema = new mongoose.Schema(
   {
-    resourceId: { type: String, required: true }, // e.g. "w1-t0-r0"
+    resourceId: { type: String, required: true },
     url: { type: String, default: "" },
     completed: { type: Boolean, default: false },
     completedAt: { type: Date, default: null },
@@ -18,12 +21,34 @@ const ResourceSchema = new mongoose.Schema(
   { _id: false },
 );
 
-// ── Quiz ─────────────────────────────────────────────────────────────────────
+// ── Per-question result inside one attempt ────────────────────────────────────
+const QuestionResultSchema = new mongoose.Schema(
+  {
+    questionIndex: { type: Number, required: true }, // index in WeekQuiz.questions
+    topic: { type: String, required: true }, // denormalised for fast analysis
+    correct: { type: Boolean, required: true },
+    selected: { type: String, default: "" }, // what the user chose
+  },
+  { _id: false },
+);
+
+// ── One quiz attempt ──────────────────────────────────────────────────────────
+const AttemptSchema = new mongoose.Schema(
+  {
+    score: { type: Number, required: true }, // correct count out of totalQuestions
+    total: { type: Number, required: true }, // total questions in that attempt
+    results: { type: [QuestionResultSchema], default: [] },
+    attemptedAt: { type: Date, default: Date.now },
+  },
+  { _id: false },
+);
+
+// ── Quiz (per week, per user) ──────────────────────────────────────────────────
 const QuizSchema = new mongoose.Schema(
   {
-    bestScore: { type: Number, default: 0 }, // highest score ever (0-10)
-    passed: { type: Boolean, default: false }, // true once score >= 8, stays true
-    attempts: { type: Number, default: 0 },
+    bestScore: { type: Number, default: 0 },
+    passed: { type: Boolean, default: false },
+    attempts: { type: [AttemptSchema], default: [] },
     lastAttemptAt: { type: Date, default: null },
   },
   { _id: false },
@@ -52,7 +77,7 @@ const WeekSchema = new mongoose.Schema(
   { _id: false },
 );
 
-// ── Root document ─────────────────────────────────────────────────────────────
+// ── Root ──────────────────────────────────────────────────────────────────────
 const UserProgressSchema = new mongoose.Schema(
   {
     userId: {
@@ -60,13 +85,12 @@ const UserProgressSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
-    courseId: { type: String, required: true }, // e.g. "java-backend-w1"
+    courseId: { type: String, required: true },
     weeks: { type: [WeekSchema], default: [] },
   },
   { timestamps: true },
 );
 
-// Unique index: one progress doc per user-course pair
 UserProgressSchema.index({ userId: 1, courseId: 1 }, { unique: true });
 
 module.exports = mongoose.model("UserProgress", UserProgressSchema);

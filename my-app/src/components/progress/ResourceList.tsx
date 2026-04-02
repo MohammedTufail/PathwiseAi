@@ -14,7 +14,7 @@ import {
   Youtube,
   Github,
 } from "lucide-react";
-import type { ResourceProgress } from "../../api/progressApi";
+import type { ResourceProgress } from "./../api/progressApi";
 
 interface VideoResource {
   title: string;

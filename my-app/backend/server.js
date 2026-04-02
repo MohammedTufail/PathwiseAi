@@ -11,6 +11,7 @@ const User = require("./models/User");
 const app = express();
 const progressRoutes = require("./routes/progressRoutes");
 const chatRoutes = require("./routes/chatRoutes");
+const quizRoutes = require("./routes/quizRoutes");   // ADD
 
 // -----------------------------
 // Hardcoded configuration
@@ -22,6 +23,11 @@ const JWT_SECRET = process.env.JWT_SECRET; // choose a strong secret
 app.use(cors());
 app.use(express.json());
 app.use("/api/chat", require("./routes/chatRoutes"));
+
+ 
+app.use("/api/quiz", quizRoutes);                    // ADD
+ 
+
 // ===============================
 // MongoDB Connection
 // ===============================

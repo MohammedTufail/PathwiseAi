@@ -32,11 +32,12 @@ export interface QuizPayload {
 
 // What LearningPath passes into <QuizModal />
 export interface QuizTriggerProps {
+  courseId: string;
+  weekNumber: number;
   subject: string;
   topics: string[];
   weekTitle: string;
 }
-
 // Per-question answered state tracked inside the modal
 export interface AnswerState {
   selected: string | null; // e.g. "A" or "True"
