@@ -1,8 +1,4 @@
-// frontend/src/api/quizApi.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// All HTTP calls for the quiz system.
-// QuizModal no longer calls Groq directly — everything goes through the backend.
-// ─────────────────────────────────────────────────────────────────────────────
+// frontend/src/api/quizApi.ts  (v3)
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:5000";
 
@@ -14,6 +10,7 @@ export interface QuizQuestion {
   answer: string;
   explanation: string;
   topic: string;
+  subtopic: string;
   difficulty: "easy" | "medium" | "hard";
   question_type: "mcq" | "true_false" | "scenario";
 }
@@ -21,34 +18,41 @@ export interface QuizQuestion {
 export interface QuestionResult {
   questionIndex: number;
   topic: string;
+  subtopic: string;
   correct: boolean;
   selected: string;
 }
 
-export interface TopicStat {
-  topic: string;
+export interface SubtopicStat {
+  subtopic: string;
   correct: number;
   total: number;
-  accuracy: number; // 0–1
+  accuracy: number;
   isWeak: boolean;
 }
 
-export interface AttemptResult {
+export interface TopicAttemptResult {
+  topic: string;
   score: number;
   total: number;
   passed: boolean;
   bestScore: number;
-  topicStats: TopicStat[];
-  weakTopics: string[];
+  subtopicStats: SubtopicStat[];
+  weakSubtopics: string[];
 }
 
-export interface AnalysisResult {
-  topicStats: TopicStat[];
-  weakTopics: string[];
+export interface TopicSummaryItem {
+  topic: string;
   attempted: boolean;
   bestScore: number;
   passed: boolean;
-  attemptCount: number;
+  subtopicStats: SubtopicStat[];
+}
+
+export interface RemediationData {
+  weakSubtopics: string[];
+  chatPrompt: string | null;
+  reQuizQuestions: QuizQuestion[];
 }
 
 // ── Helper ────────────────────────────────────────────────────────────────────
@@ -57,69 +61,75 @@ function getToken(): string {
   return localStorage.getItem("token") ?? "";
 }
 
-async function apiFetch<T>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
+async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
+    ...init,
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${getToken()}`,
-      ...(options.headers ?? {}),
+      ...(init.headers ?? {}),
     },
   });
   const data = await res.json();
-  if (!res.ok || !data.success) {
+  if (!res.ok || !data.success)
     throw new Error(data.message ?? "Quiz API error");
-  }
   return data as T;
 }
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 
-/**
- * Fetch (or generate) questions for a week.
- * If generating for the first time, pass subject/weekTitle/topics in the body.
- * Subsequent calls just fetch from cache — no body needed.
- */
-export async function fetchWeekQuestions(
+/** Fetch (or generate on first call) questions for a single topic */
+export async function fetchTopicQuestions(
   courseId: string,
   weekNumber: number,
-  opts?: { subject: string; weekTitle: string; topics: string[] },
+  topic: string,
+  opts?: { subject: string; weekTitle: string },
 ): Promise<{ questions: QuizQuestion[]; cached: boolean }> {
-  const data = await apiFetch<{ questions: QuizQuestion[]; cached: boolean }>(
-    `/api/quiz/${courseId}/${weekNumber}`,
-    opts ? { method: "POST", body: JSON.stringify(opts) } : { method: "GET" },
+  const encodedTopic = encodeURIComponent(topic);
+  const query = opts
+    ? `?subject=${encodeURIComponent(opts.subject)}&weekTitle=${encodeURIComponent(opts.weekTitle)}`
+    : "";
+  return apiFetch(
+    `/api/quiz/${courseId}/${weekNumber}/${encodedTopic}${query}`,
   );
-  return data;
 }
 
-/**
- * Submit a completed attempt.
- * Returns score breakdown + topic analysis.
- */
-export async function submitQuizAttempt(
+/** Submit a completed topic quiz attempt */
+export async function submitTopicAttempt(
   courseId: string,
   weekNumber: number,
+  topic: string,
   score: number,
   total: number,
   results: QuestionResult[],
-): Promise<AttemptResult> {
-  return apiFetch<AttemptResult>(
-    `/api/quiz/${courseId}/${weekNumber}/attempt`,
-    { method: "POST", body: JSON.stringify({ score, total, results }) },
+  totalTopicsInWeek: number,
+): Promise<TopicAttemptResult> {
+  return apiFetch(
+    `/api/quiz/${courseId}/${weekNumber}/${encodeURIComponent(topic)}/attempt`,
+    {
+      method: "POST",
+      body: JSON.stringify({ score, total, results, totalTopicsInWeek }),
+    },
   );
 }
 
-/**
- * Get topic analysis for a week (after at least one attempt).
- */
-export async function fetchWeekAnalysis(
+/** Get all topics' pass/fail status for a week */
+export async function fetchWeekSummary(
   courseId: string,
   weekNumber: number,
-): Promise<AnalysisResult> {
-  return apiFetch<AnalysisResult>(
-    `/api/quiz/${courseId}/${weekNumber}/analysis`,
+  topics: string[],
+): Promise<{ topicSummary: TopicSummaryItem[]; weekCompleted: boolean }> {
+  const q = `?topics=${encodeURIComponent(topics.join(","))}`;
+  return apiFetch(`/api/quiz/${courseId}/${weekNumber}/summary${q}`);
+}
+
+/** Get remediation data: weak subtopics, chatbot prompt, re-quiz questions */
+export async function fetchRemediation(
+  courseId: string,
+  weekNumber: number,
+  topic: string,
+): Promise<RemediationData> {
+  return apiFetch(
+    `/api/quiz/${courseId}/${weekNumber}/${encodeURIComponent(topic)}/remediation`,
   );
 }

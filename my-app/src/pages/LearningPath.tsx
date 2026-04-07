@@ -1,4 +1,4 @@
-
+// learningPath
 // What changed from the previous version:
 //   1. Removed the inline WeekCard component (now in components/progress/WeekCard.tsx)
 //   2. Removed `completedWeeks` useState — progress comes from the DB via useProgress
@@ -175,13 +175,12 @@ const LearningPath = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [curriculum, setCurriculum] = useState<CurriculumData | null>(null);
   const [userData, setUserData] = useState<UserData>({ name: "User" });
-  const [subject, setSubject] = useState("");
 
-  // ── Load subject from localStorage ───────────────────────────────────────
-  useEffect(() => {
-   const stored = localStorage.getItem("subject");
-   if (stored) setSubject(stored);
-  }, []);
+
+  // Read subject synchronously — gives correct courseId on first render
+  const [subject, setSubject] = useState<string>(
+    () => localStorage.getItem("subject") ?? "",
+  );
 
   // ── Load curriculum from localStorage ────────────────────────────────────
   useEffect(() => {
@@ -258,7 +257,7 @@ const LearningPath = () => {
   // ── Progress tracking ─────────────────────────────────────────────────────
   // courseId uses the subject string so different subjects have separate progress.
   // Falls back to "default-course" when subject hasn't loaded yet.
-  const courseId = subject || "default-course";
+  const courseId = subject?.trim() || "";
 
   const {
     progress,
@@ -303,7 +302,7 @@ const LearningPath = () => {
   }
 
   // ----------------------------------------------------
-  
+
   const currentWeekData =
     curriculum.weeks.find(
       (w) => !selectors.getWeekProgress(w.week)?.isCompleted,
@@ -637,32 +636,36 @@ const LearningPath = () => {
             />
 
             <div className="space-y-6">
-              {curriculum.weeks.map((week, index) => (
-                <WeekCard
-                  key={week.week}
-                  week={week}
-                  index={index}
-                  subject={subject}
-                  weekProgress={selectors.getWeekProgress(week.week)}
-                  isLocked={selectors.isWeekLocked(week.week)}
-                  actions={actions}
-                />
-              ))}
+              {courseId &&
+                curriculum.weeks.map((week, index) => (
+                  <WeekCard
+                    key={week.week}
+                    week={week}
+                    index={index}
+                    subject={subject}
+                    courseId={courseId}
+                    weekProgress={selectors.getWeekProgress(week.week)}
+                    isLocked={selectors.isWeekLocked(week.week)}
+                    actions={actions}
+                  />
+                ))}
             </div>
           </div>
         </div>
       </motion.main>
-      <ChatWidget
-        courseId={courseId}
-        subject={subject}
-        weekNumber={currentWeekData?.week ?? 1}
-        weekTitle={currentWeekData?.title ?? ""}
-        topics={currentWeekData?.topics ?? []}
-        quizScore={currentWeekProgress?.quiz.bestScore ?? null}
-        quizPassed={currentWeekProgress?.quiz.passed ?? false}
-      />
+      {courseId && (
+        <ChatWidget
+          courseId={courseId}
+          subject={subject}
+          weekNumber={currentWeekData?.week ?? 1}
+          weekTitle={currentWeekData?.title ?? ""}
+          topics={currentWeekData?.topics ?? []}
+          quizScore={currentWeekProgress?.quiz?.bestScore ?? 0}
+          quizPassed={currentWeekProgress?.quiz?.passed ?? false}
+        />
+      )}
     </div>
   );
-};
+};;
 
 export default LearningPath;

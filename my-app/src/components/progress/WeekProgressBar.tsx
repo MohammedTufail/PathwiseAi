@@ -1,16 +1,14 @@
-// components/progress/WeekProgressBar.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// Compact 3-pill progress bar for a single week.
-// Shows: resources X/Y | quiz score | project status
-// Used inside WeekCard headers.
-// ─────────────────────────────────────────────────────────────────────────────
+// frontend/src/components/progress/WeekProgressBar.tsx  (v3)
+// Updated: quiz pill now shows "X/Y topics passed" instead of single score.
 
 import { CheckCircle2, BookOpen, Brain, Folder } from "lucide-react";
 import type { WeekProgress } from "../../api/progressApi";
 
 interface Props {
-  weekProgress?: WeekProgress;
-  totalResources: number; // total from curriculum (not just from DB)
+  weekProgress: WeekProgress | undefined;
+  totalResources: number;
+  topicsPassed?: number; // from TopicSummaryItem[]
+  totalTopics?: number;
 }
 
 const Pill = ({
@@ -37,46 +35,37 @@ const Pill = ({
 export default function WeekProgressBar({
   weekProgress,
   totalResources,
+  topicsPassed = 0,
+  totalTopics = 0,
 }: Props) {
   const completedResources =
     weekProgress?.resources.filter((r) => r.completed).length ?? 0;
   const resourcesDone =
-    totalResources > 0 ? completedResources / totalResources >= 0.7 : false;
-
-  const quizPassed = weekProgress?.quiz.passed ?? false;
-  const bestScore = weekProgress?.quiz.bestScore ?? 0;
-  const projectDone = weekProgress?.project.completed ?? false;
+    totalResources > 0 && completedResources / totalResources >= 0.7;
+  const quizDone = totalTopics > 0 && topicsPassed / totalTopics >= 0.75;
+  const projectDone = weekProgress?.project?.completed ?? false;
 
   return (
     <div className="flex items-center flex-wrap gap-2 mt-3">
-      {/* Resources */}
       <Pill
         icon={<BookOpen className="h-3 w-3" />}
         label={`${completedResources}/${totalResources} articles`}
         done={resourcesDone}
       />
-
-      {/* Quiz */}
       <Pill
         icon={<Brain className="h-3 w-3" />}
         label={
-          quizPassed
-            ? `${bestScore}/10 Passed`
-            : bestScore > 0
-              ? `${bestScore}/10`
-              : "Quiz pending"
+          totalTopics > 0
+            ? `${topicsPassed}/${totalTopics} topics passed`
+            : "Quizzes pending"
         }
-        done={quizPassed}
+        done={quizDone}
       />
-
-      {/* Project */}
       <Pill
         icon={<Folder className="h-3 w-3" />}
         label={projectDone ? "Project done" : "Project pending"}
         done={projectDone}
       />
-
-      {/* Week completed badge */}
       {weekProgress?.isCompleted && (
         <div className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-green-500/15 border border-green-500/30 text-green-400 ml-auto">
           <CheckCircle2 className="h-3 w-3" />

@@ -14,7 +14,6 @@ import {
   Youtube,
   Github,
 } from "lucide-react";
-import type { ResourceProgress } from "./../api/progressApi";
 
 interface VideoResource {
   title: string;
@@ -33,7 +32,8 @@ interface Props {
   videos: VideoResource[];
   repos: RepoResource[];
   completedResourceIds: string[]; // from DB
-  onOpen: (resourceId: string, url: string) => void;
+  onOpen: (resourceId: string, url: string) => void; // just opens link now
+  onToggleDone: (resourceId: string) => void;
 }
 
 function resourceId(
@@ -60,6 +60,11 @@ export default function ResourceList({
 
   return (
     <div className="mt-4 space-y-4">
+      {topicName && (
+        <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+          {topicName}
+        </p>
+      )}
       {/* Videos */}
       {videos.length > 0 && (
         <div>
@@ -73,22 +78,36 @@ export default function ResourceList({
               const done = isCompleted(id);
               return (
                 <li key={id}>
-                  <button
-                    onClick={() => onOpen(id, vid.url)}
-                    className="group flex items-center gap-2 w-full text-left text-sm hover:text-green-400 transition-colors duration-200"
-                  >
-                    {done ? (
-                      <CheckCircle2 className="shrink-0 h-3.5 w-3.5 text-green-500" />
-                    ) : (
-                      <Circle className="shrink-0 h-3.5 w-3.5 text-gray-600" />
-                    )}
-                    <span
-                      className={`flex-1 truncate ${done ? "text-green-400" : "text-gray-400"}`}
+                  <div className="flex items-center gap-2">
+                    {/* Mark as done button */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation(); // prevent link click
+                        onToggleDone(id);
+                      }}
+                      className="shrink-0"
+                      title={done ? "Mark as not done" : "Mark as done"}
                     >
-                      {vid.title}
-                    </span>
-                    <ExternalLink className="shrink-0 h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity text-gray-600" />
-                  </button>
+                      {done ? (
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <Circle className="h-4 w-4 text-gray-500 hover:text-white" />
+                      )}
+                    </button>
+
+                    {/* Actual link */}
+                    <button
+                      onClick={() => onOpen(id, vid.url)}
+                      className="group flex items-center gap-2 flex-1 text-left text-sm hover:text-green-400 transition-colors duration-200"
+                    >
+                      <span
+                        className={`truncate ${done ? "text-green-400 opacity-70" : "text-gray-400"}`}
+                      >
+                        {vid.title}
+                      </span>
+                      <ExternalLink className="shrink-0 h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity text-gray-600" />
+                    </button>
+                  </div>
                 </li>
               );
             })}

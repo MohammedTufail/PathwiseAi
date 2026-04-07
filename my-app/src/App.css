@@ -108,3 +108,17 @@
 .resourceBox ul {
   padding-left: 18px;
 }
+
+/* in your global CSS */
+.no-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.no-scrollbar::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+
+.no-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.3);
+}

@@ -1,32 +1,44 @@
-// backend/controllers/quizController.js
+// backend/controllers/quizController.js  (v3)
 // ─────────────────────────────────────────────────────────────────────────────
-// Three endpoints:
+// Endpoints:
 //
-//   GET  /api/quiz/:courseId/:weekNumber
-//     → Returns questions (generates and caches on first call)
+//   GET  /api/quiz/:courseId/:weekNumber/:topic
+//     → Fetch (or generate) questions for ONE topic
+//     → Query param ?subject=&weekTitle= needed only for first generation
 //
-//   POST /api/quiz/:courseId/:weekNumber/attempt
-//     → Saves attempt with per-question results
-//     → Returns score, topic analysis, weak topics
+//   POST /api/quiz/:courseId/:weekNumber/:topic/attempt
+//     → Save a topic quiz attempt, return subtopic analysis
 //
-//   GET  /api/quiz/:courseId/:weekNumber/analysis
-//     → Returns topic stats + weak topics for focused quiz
+//   GET  /api/quiz/:courseId/:weekNumber/summary
+//     → Return all topics' pass/fail status + weak subtopics for the week
+//
+//   GET  /api/quiz/:courseId/:weekNumber/:topic/remediation
+//     → Return weak subtopics + chatbot prompt + re-quiz questions
 // ─────────────────────────────────────────────────────────────────────────────
 
 const WeekQuiz = require("../models/WeekQuiz");
 const UserProgress = require("../models/UserProgress");
-const { generateWeekQuestions } = require("../utils/generateQuestions");
-const { analyzeTopics, getWeakTopics } = require("../utils/topicAnalysis");
-const { isWeekComplete, PASS_SCORE } = require("../utils/weekCompletion");
+const { generateTopicQuestions } = require("../utils/generateQuestions");
+const {
+  analyzeSubtopics,
+  getWeakSubtopics,
+  buildTopicSummary,
+} = require("../utils/topicAnalysis");
+const { isWeekComplete } = require("../utils/weekCompletion");
 
-// ── Ensure week exists in UserProgress ───────────────────────────────────────
+const { validateCourseId } = require("../utils/validateCourseId");
+
+const PASS_SCORE = 3; // 3/5 = 60% — pass threshold for a topic quiz
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
+
 function ensureWeek(progressDoc, weekNumber) {
   let week = progressDoc.weeks.find((w) => w.weekNumber === weekNumber);
   if (!week) {
     progressDoc.weeks.push({
       weekNumber,
       resources: [],
-      quiz: {},
+      topicQuizzes: [],
       project: {},
     });
     week = progressDoc.weeks[progressDoc.weeks.length - 1];
@@ -34,141 +46,146 @@ function ensureWeek(progressDoc, weekNumber) {
   return week;
 }
 
-// ── Re-evaluate week completion and save ─────────────────────────────────────
-async function checkAndSave(progressDoc) {
+function ensureTopicQuiz(week, topic) {
+  let tq = week.topicQuizzes.find((q) => q.topic === topic);
+  if (!tq) {
+    week.topicQuizzes.push({
+      topic,
+      bestScore: 0,
+      passed: false,
+      attempts: [],
+      lastAttemptAt: null,
+    });
+    tq = week.topicQuizzes[week.topicQuizzes.length - 1];
+  }
+  return tq;
+}
+
+async function checkAndSave(progressDoc, totalTopicsPerWeek = {}) {
   for (const week of progressDoc.weeks) {
-    if (!week.isCompleted && isWeekComplete(week)) {
-      week.isCompleted = true;
-      week.completedAt = new Date();
+    if (!week.isCompleted) {
+      const total = totalTopicsPerWeek[week.weekNumber] || 0;
+      if (isWeekComplete(week, total)) {
+        week.isCompleted = true;
+        week.completedAt = new Date();
+      }
     }
   }
   return progressDoc.save();
 }
 
 // =============================================================================
-// GET /api/quiz/:courseId/:weekNumber
-// Returns the question bank. Generates it if it doesn't exist yet.
-// Body (optional): { subject, weekTitle, topics } — needed only for generation
+// GET /api/quiz/:courseId/:weekNumber/:topic
+// Fetch (or generate) questions for a single topic.
+// On first call: pass ?subject=&weekTitle= as query params.
+// After that: returns cached questions — no Groq call.
 // =============================================================================
-const getQuestions = async (req, res) => {
+const getTopicQuestions = async (req, res) => {
   try {
-    let { courseId, weekNumber } = req.params;
-
-    // ✅ normalize courseId (fix spaces → hyphens issue)
-    
-
+    const { courseId, weekNumber, topic } = req.params;
+    if (!validateCourseId(courseId, res)) return;
     const weekNum = Number(weekNumber);
+    const decodedTopic = decodeURIComponent(topic);
 
-    if (!courseId || isNaN(weekNum)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid courseId or weekNumber",
-      });
-    }
+    // Load the WeekQuiz doc (or create empty shell)
+    let weekQuiz = await WeekQuiz.findOne({ courseId, weekNumber: weekNum });
 
-    // ✅ Check if quiz already exists
-    let weekQuiz = await WeekQuiz.findOne({
-      courseId,
-      weekNumber: weekNum,
-    });
-
-    // ✅ If exists → return immediately (NO crash possible)
-    if (weekQuiz && weekQuiz.questions?.length > 0) {
+    // Check if this topic bank already exists
+    if (weekQuiz && weekQuiz.topicBanks?.get(decodedTopic)?.questions?.length) {
+      const bank = weekQuiz.topicBanks.get(decodedTopic);
       return res.json({
         success: true,
-        questions: weekQuiz.questions,
+        topic: decodedTopic,
+        questions: bank.questions,
         cached: true,
-        generatedAt: weekQuiz.generatedAt,
+        generatedAt: bank.generatedAt,
       });
     }
 
-    // ✅ FIX: safely read body (no undefined crash)
-    const subject = req.body?.subject || "";
-    const weekTitle = req.body?.weekTitle || "";
-    const topics = req.body?.topics || [];
+    // Need to generate — require subject + weekTitle
+    const { subject = "", weekTitle = "" } = req.query;
 
-    if (!topics.length) {
+    if (!subject || !weekTitle) {
       return res.status(400).json({
         success: false,
-        message: "topics array is required for first generation",
+        message:
+          "subject and weekTitle query params required for first generation",
       });
     }
 
-    console.log(`📝 Generating quiz for course=${courseId} week=${weekNum}`);
+    console.log(
+      `📝 Generating topic quiz: course=${courseId} week=${weekNum} topic="${decodedTopic}"`,
+    );
 
-    const questions = await generateWeekQuestions(subject, weekTitle, topics);
+    const questions = await generateTopicQuestions(
+      subject,
+      weekTitle,
+      decodedTopic,
+    );
 
-    if (!questions || !questions.length) {
-      return res.status(500).json({
-        success: false,
-        message: "Question generation failed",
-      });
+    if (!questions.length) {
+      return res
+        .status(500)
+        .json({ success: false, message: "Generation returned no questions" });
     }
-    
-    // ✅ FIX: updated mongoose option (removes warning)
+
+    // Upsert the WeekQuiz doc, setting this topic's bank
     weekQuiz = await WeekQuiz.findOneAndUpdate(
       { courseId, weekNumber: weekNum },
       {
-        courseId,
-        weekNumber: weekNum,
-        weekTitle,
-        subject,
-        topics,
-        questions,
-        generatedAt: new Date(),
+        $setOnInsert: { courseId, weekNumber: weekNum, weekTitle, subject },
+        $set: {
+          [`topicBanks.${decodedTopic}`]: {
+            questions,
+            generatedAt: new Date(),
+          },
+        },
       },
-
-      {
-        upsert: true,
-        returnDocument: "after", // ✅ replaces deprecated `new: true`
-      },
+      { upsert: true, new: true },
     );
 
-    console.log(`✅ Generated ${questions.length} questions`);
+    console.log(
+      `✅ Generated ${questions.length} questions for "${decodedTopic}"`,
+    );
 
-    return res.json({
+    res.json({
       success: true,
-      questions: weekQuiz.questions,
+      topic: decodedTopic,
+      questions,
       cached: false,
-      generatedAt: weekQuiz.generatedAt,
+      generatedAt: new Date(),
     });
   } catch (err) {
-    console.error("[getQuestions]", err);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to get quiz questions",
-    });
+    console.error("[getTopicQuestions]", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to get topic questions" });
   }
 };
 
 // =============================================================================
-// POST /api/quiz/:courseId/:weekNumber/attempt
-// Saves a completed quiz attempt with per-question results.
-// Body: {
-//   score: number,          // correct answer count
-//   total: number,          // total questions
-//   results: [              // per-question detail
-//     { questionIndex, topic, correct, selected }
-//   ]
-// }
-// Returns: { score, total, passed, bestScore, topicStats, weakTopics }
+// POST /api/quiz/:courseId/:weekNumber/:topic/attempt
+// Save a completed topic quiz attempt.
+// Body: { score, total, results: [{ questionIndex, topic, subtopic, correct, selected }] }
+// Returns: { score, total, passed, bestScore, subtopicStats, weakSubtopics }
 // =============================================================================
-const submitAttempt = async (req, res) => {
+const submitTopicAttempt = async (req, res) => {
   try {
-    const { courseId, weekNumber } = req.params;
+    const { courseId, weekNumber, topic } = req.params;
+    if (!validateCourseId(courseId, res)) return;
     const weekNum = Number(weekNumber);
-    const { score, total, results = [] } = req.body;
+    const decodedTopic = decodeURIComponent(topic);
+    const { score, total, results = [], totalTopicsInWeek = 0 } = req.body;
 
     if (score == null || total == null) {
       return res
         .status(400)
-        .json({ success: false, message: "score and total are required" });
+        .json({ success: false, message: "score and total required" });
     }
 
     const numericScore = Number(score);
     const numericTotal = Number(total);
 
-    // Load or create progress doc
     let progress = await UserProgress.findOneAndUpdate(
       { userId: req.userId, courseId },
       { $setOnInsert: { userId: req.userId, courseId, weeks: [] } },
@@ -176,63 +193,67 @@ const submitAttempt = async (req, res) => {
     );
 
     const week = ensureWeek(progress, weekNum);
+    const tq = ensureTopicQuiz(week, decodedTopic);
 
-    // ── Quiz rules ────────────────────────────────────────────────────────────
-    const newAttempt = {
+    // ── Save attempt ─────────────────────────────────────────────────────────
+    const attempt = {
       score: numericScore,
       total: numericTotal,
       results,
       attemptedAt: new Date(),
     };
+    tq.attempts.push(attempt);
+    if (tq.attempts.length > 5) tq.attempts = tq.attempts.slice(-5);
 
-    // Keep last 5 attempts to bound storage — older ones aren't needed for analysis
-    week.quiz.attempts = week.quiz.attempts || [];
-    week.quiz.attempts.push(newAttempt);
-    if (week.quiz.attempts.length > 5) {
-      week.quiz.attempts = week.quiz.attempts.slice(-5);
+    // Best score — keep highest
+    tq.bestScore = Math.max(tq.bestScore || 0, numericScore);
+
+    // Passed — once true stays true
+    if (!tq.passed && numericScore >= PASS_SCORE) {
+      tq.passed = true;
     }
+    tq.lastAttemptAt = new Date();
 
-    // Best score: keep highest
-    week.quiz.bestScore = Math.max(week.quiz.bestScore || 0, numericScore);
+    // Pass totalTopics so week completion check works correctly
+    await checkAndSave(progress, { [weekNum]: Number(totalTopicsInWeek) });
 
-    // Passed: once true stays true
-    if (!week.quiz.passed && numericScore >= PASS_SCORE) {
-      week.quiz.passed = true;
-    }
-
-    week.quiz.lastAttemptAt = new Date();
-
-    await checkAndSave(progress);
-
-    // ── Topic analysis ────────────────────────────────────────────────────────
-    const topicStats = analyzeTopics(week.quiz.attempts);
-    const weakTopics = topicStats.filter((t) => t.isWeak).map((t) => t.topic);
+    // ── Subtopic analysis ─────────────────────────────────────────────────────
+    const subtopicStats = analyzeSubtopics(tq.attempts);
+    const weakSubtopics = subtopicStats
+      .filter((s) => s.isWeak)
+      .map((s) => s.subtopic);
 
     res.json({
       success: true,
+      topic: decodedTopic,
       score: numericScore,
       total: numericTotal,
-      passed: week.quiz.passed,
-      bestScore: week.quiz.bestScore,
-      topicStats,
-      weakTopics,
+      passed: tq.passed,
+      bestScore: tq.bestScore,
+      subtopicStats,
+      weakSubtopics,
     });
   } catch (err) {
-    console.error("[submitAttempt]", err);
+    console.error("[submitTopicAttempt]", err);
     res.status(500).json({ success: false, message: "Failed to save attempt" });
   }
 };
 
 // =============================================================================
-// GET /api/quiz/:courseId/:weekNumber/analysis
-// Returns topic stats and weak topics for the current user.
-// Used to decide whether to show the focused mini-quiz button.
+// GET /api/quiz/:courseId/:weekNumber/summary
+// Returns per-topic pass/fail status and weak subtopics for the whole week.
+// Used by WeekCard to render the TopicQuizBar.
 // =============================================================================
-const getAnalysis = async (req, res) => {
+const getWeekSummary = async (req, res) => {
   try {
     const { courseId, weekNumber } = req.params;
+    if (!validateCourseId(courseId, res)) return;
     const weekNum = Number(weekNumber);
 
+    // topics[] sent as comma-separated query param
+    const topics = req.query.topics
+      ? req.query.topics.split(",").map((t) => t.trim())
+      : [];
     const progress = await UserProgress.findOne({
       userId: req.userId,
       courseId,
@@ -241,41 +262,97 @@ const getAnalysis = async (req, res) => {
     if (!progress) {
       return res.json({
         success: true,
-        topicStats: [],
-        weakTopics: [],
-        attempted: false,
+        topicSummary: [],
+        weekCompleted: false,
       });
     }
 
     const week = progress.weeks.find((w) => w.weekNumber === weekNum);
+    const topicSummary = buildTopicSummary(week?.topicQuizzes ?? [], topics);
+    const weekCompleted = week?.isCompleted ?? false;
 
-    if (!week || !week.quiz.attempts?.length) {
-      return res.json({
-        success: true,
-        topicStats: [],
-        weakTopics: [],
-        attempted: false,
-      });
-    }
-
-    const topicStats = analyzeTopics(week.quiz.attempts);
-    const weakTopics = topicStats.filter((t) => t.isWeak).map((t) => t.topic);
-
-    res.json({
-      success: true,
-      topicStats,
-      weakTopics,
-      attempted: true,
-      bestScore: week.quiz.bestScore,
-      passed: week.quiz.passed,
-      attemptCount: week.quiz.attempts.length,
-    });
+    res.json({ success: true, topicSummary, weekCompleted });
   } catch (err) {
-    console.error("[getAnalysis]", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to load analysis" });
+    console.error("[getWeekSummary]", err);
+    res.status(500).json({ success: false, message: "Failed to get summary" });
   }
 };
 
-module.exports = { getQuestions, submitAttempt, getAnalysis };
+// =============================================================================
+// GET /api/quiz/:courseId/:weekNumber/:topic/remediation
+// Returns:
+//   - weakSubtopics: string[]
+//   - chatPrompt: a ready-made message to send to the AI chatbot
+//   - reQuizQuestions: filtered questions covering only weak subtopics
+//     (pulled from the cached bank — no new Groq call unless bank is thin)
+// =============================================================================
+const getRemediation = async (req, res) => {
+  try {
+    const { courseId, weekNumber, topic } = req.params;
+    if (!validateCourseId(courseId, res)) return;
+    const weekNum = Number(weekNumber);
+    const decodedTopic = decodeURIComponent(topic);
+
+    // Get the user's weak subtopics for this topic
+    const progress = await UserProgress.findOne({
+      userId: req.userId,
+      courseId,
+    });
+    const week = progress?.weeks.find((w) => w.weekNumber === weekNum);
+    const tq = week?.topicQuizzes?.find((q) => q.topic === decodedTopic);
+
+    if (!tq || !tq.attempts?.length) {
+      return res
+        .status(400)
+        .json({ success: false, message: "No attempts yet for this topic" });
+    }
+
+    const weakSubtopics = getWeakSubtopics(tq.attempts);
+
+    if (!weakSubtopics.length) {
+      return res.json({
+        success: true,
+        weakSubtopics: [],
+        chatPrompt: null,
+        reQuizQuestions: [],
+      });
+    }
+
+    // Chatbot prompt — auto-send to the chat endpoint or display to user
+    const chatPrompt = `I just took the "${decodedTopic}" quiz and I'm struggling with: ${weakSubtopics.join(", ")}. Can you explain these concepts simply with examples?`;
+
+    // Re-quiz questions — filter the cached bank to weak subtopics
+    const weekQuiz = await WeekQuiz.findOne({ courseId, weekNumber: weekNum });
+    const bank = weekQuiz?.topicBanks?.get(decodedTopic);
+    const allQuestions = bank?.questions ?? [];
+
+    const reQuizQuestions = allQuestions.filter((q) =>
+      weakSubtopics.some(
+        (ws) => ws.toLowerCase() === (q.subtopic || "").toLowerCase(),
+      ),
+    );
+
+    // If not enough questions from the bank (< 2), include all topic questions as fallback
+    const finalQuestions =
+      reQuizQuestions.length >= 2 ? reQuizQuestions : allQuestions.slice(0, 3);
+
+    res.json({
+      success: true,
+      weakSubtopics,
+      chatPrompt,
+      reQuizQuestions: finalQuestions,
+    });
+  } catch (err) {
+    console.error("[getRemediation]", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to get remediation data" });
+  }
+};
+
+module.exports = {
+  getTopicQuestions,
+  submitTopicAttempt,
+  getWeekSummary,
+  getRemediation,
+};

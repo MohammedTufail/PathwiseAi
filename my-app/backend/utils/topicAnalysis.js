@@ -1,40 +1,40 @@
-// backend/utils/topicAnalysis.js
+// backend/utils/topicAnalysis.js  (v3)
 // ─────────────────────────────────────────────────────────────────────────────
-// Pure functions — no DB calls.
-// Derive weak topics from a user's quiz attempt history.
+// Pure functions — no DB calls, no side effects.
 //
-// A topic is "weak" if the student got < WEAK_THRESHOLD of its questions
-// correct across ALL attempts (uses the BEST attempt per topic to be fair).
+// Two levels of analysis:
+//   1. Topic level  — did the student pass this topic quiz? (for week completion)
+//   2. Subtopic level — which specific sub-concepts did they get wrong?
+//                       (for targeted re-quiz and chatbot help)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const WEAK_THRESHOLD = 0.6; // < 60% correct on a topic = weak
+const PASS_SCORE = 3; // 3/5 correct = passed a topic quiz (60%)
+const WEAK_THRESHOLD = 0.5; // < 50% on a subtopic = weak subtopic
+const PASS_THRESHOLD = 0.75; // 75% of topics must be passed for week quiz completion
 
 /**
- * Given all attempts for a week, compute per-topic accuracy.
+ * Analyse a single topic quiz attempt history.
+ * Returns subtopic-level stats from the latest attempt.
  *
- * @param {Array} attempts  - AttemptSchema[] from UserProgress
- * @returns {Array} topicStats:
- *   [{ topic, correct, total, accuracy, isWeak }]
+ * @param {Array} attempts - AttemptSchema[] for one topic
+ * @returns {Array} subtopicStats: [{ subtopic, correct, total, accuracy, isWeak }]
  */
-function analyzeTopics(attempts) {
+function analyzeSubtopics(attempts) {
   if (!attempts || attempts.length === 0) return [];
 
-  // Use only the most recent attempt for topic analysis.
-  // Rationale: the student may have improved — punishing them for old mistakes
-  // produces confusing "weak topic" lists. Latest attempt is most accurate signal.
+  // Use latest attempt as the signal (student's most recent performance)
   const latest = attempts[attempts.length - 1];
-
-  // Group by topic
   const map = {};
-  for (const result of latest.results || []) {
-    const t = result.topic || "Unknown";
-    if (!map[t]) map[t] = { correct: 0, total: 0 };
-    map[t].total++;
-    if (result.correct) map[t].correct++;
+
+  for (const r of latest.results || []) {
+    const key = r.subtopic || r.topic || "General";
+    if (!map[key]) map[key] = { correct: 0, total: 0 };
+    map[key].total++;
+    if (r.correct) map[key].correct++;
   }
 
-  return Object.entries(map).map(([topic, { correct, total }]) => ({
-    topic,
+  return Object.entries(map).map(([subtopic, { correct, total }]) => ({
+    subtopic,
     correct,
     total,
     accuracy: total > 0 ? correct / total : 0,
@@ -43,13 +43,66 @@ function analyzeTopics(attempts) {
 }
 
 /**
- * Returns only the weak topic names (strings).
- * Convenience wrapper for the route handler.
+ * Get just the weak subtopic names from a topic's attempt history.
  */
-function getWeakTopics(attempts) {
-  return analyzeTopics(attempts)
-    .filter((t) => t.isWeak)
-    .map((t) => t.topic);
+function getWeakSubtopics(attempts) {
+  return analyzeSubtopics(attempts)
+    .filter((s) => s.isWeak)
+    .map((s) => s.subtopic);
 }
 
-module.exports = { analyzeTopics, getWeakTopics, WEAK_THRESHOLD };
+/**
+ * Check whether a week's quiz requirement is met.
+ * Needs at least PASS_THRESHOLD fraction of topics passed.
+ *
+ * @param {Array} topicQuizzes - TopicQuizSchema[] from UserProgress week
+ * @param {number} totalTopics - how many topics exist in this week's curriculum
+ * @returns {boolean}
+ */
+function isQuizRequirementMet(topicQuizzes, totalTopics) {
+  if (!totalTopics || totalTopics === 0) return true;
+  if (!topicQuizzes || topicQuizzes.length === 0) return false;
+
+  const passedCount = topicQuizzes.filter((tq) => tq.passed).length;
+  return passedCount / totalTopics >= PASS_THRESHOLD;
+}
+
+/**
+ * Build a summary of all topics for a week.
+ * Used by the frontend to show per-topic pass/fail status.
+ *
+ * @param {Array} topicQuizzes - from UserProgress
+ * @param {string[]} allTopics - from curriculum week
+ * @returns {Array} [{ topic, attempted, bestScore, passed, subtopicStats }]
+ */
+function buildTopicSummary(topicQuizzes, allTopics) {
+  return allTopics.map((topic) => {
+    const tq = topicQuizzes?.find((q) => q.topic === topic);
+    if (!tq) {
+      return {
+        topic,
+        attempted: false,
+        bestScore: 0,
+        passed: false,
+        subtopicStats: [],
+      };
+    }
+    return {
+      topic,
+      attempted: tq.attempts?.length > 0,
+      bestScore: tq.bestScore,
+      passed: tq.passed,
+      subtopicStats: analyzeSubtopics(tq.attempts),
+    };
+  });
+}
+
+module.exports = {
+  analyzeSubtopics,
+  getWeakSubtopics,
+  isQuizRequirementMet,
+  buildTopicSummary,
+  PASS_SCORE,
+  WEAK_THRESHOLD,
+  PASS_THRESHOLD,
+};

@@ -6,7 +6,7 @@ import Login from "./pages/Login"; // <-- import login page
 import Home from "./pages/Home";
 import LearningPath from "./pages/LearningPath";
 import WeekDetails from "./pages/WeekDetails";
-import Layout from "./components/Layout";
+import Layout from "./components/Layout" // <-- import loader page
 
 function App() {
   return (

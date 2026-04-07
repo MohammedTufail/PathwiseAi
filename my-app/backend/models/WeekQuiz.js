@@ -1,14 +1,24 @@
-// backend/models/WeekQuiz.js
+// backend/models/WeekQuiz.js  (v3)
 // ─────────────────────────────────────────────────────────────────────────────
-// Stores the generated question bank for a (courseId + weekNumber) pair.
-// Questions are generated ONCE and reused across all users and all attempts.
-// This means:
-//   - Zero Groq calls after first generation for that week
-//   - Every student gets the same fair question set
-//   - Scores are directly comparable across attempts
-//
 // One document per (courseId + weekNumber).
-// Multiple users share the same question bank — it's course-level, not user-level.
+// Questions are stored per-topic in a Map so each topic quiz is independent.
+//
+// Structure:
+//   WeekQuiz {
+//     courseId, weekNumber, weekTitle, subject, topics,
+//     topicBanks: Map<topicName, TopicBank>
+//   }
+//
+//   TopicBank {
+//     questions: Question[],
+//     generatedAt: Date
+//   }
+//
+//   Question {
+//     question, options, answer, explanation,
+//     topic, subtopic,          ← NEW: subtopic for fine-grained analysis
+//     difficulty, question_type
+//   }
 // ─────────────────────────────────────────────────────────────────────────────
 
 const mongoose = require("mongoose");
@@ -16,10 +26,11 @@ const mongoose = require("mongoose");
 const QuestionSchema = new mongoose.Schema(
   {
     question: { type: String, required: true },
-    options: { type: [String], required: true }, // 4 for MCQ, 2 for true_false
-    answer: { type: String, required: true }, // "A"|"B"|"C"|"D"|"True"|"False"
+    options: { type: [String], required: true },
+    answer: { type: String, required: true },
     explanation: { type: String, required: true },
-    topic: { type: String, required: true }, // which topic this question covers
+    topic: { type: String, required: true },
+    subtopic: { type: String, default: "" }, // e.g. "method overriding", "super keyword"
     difficulty: {
       type: String,
       enum: ["easy", "medium", "hard"],
@@ -34,6 +45,14 @@ const QuestionSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const TopicBankSchema = new mongoose.Schema(
+  {
+    questions: { type: [QuestionSchema], default: [] },
+    generatedAt: { type: Date, default: Date.now },
+  },
+  { _id: false },
+);
+
 const WeekQuizSchema = new mongoose.Schema(
   {
     courseId: { type: String, required: true },
@@ -41,13 +60,13 @@ const WeekQuizSchema = new mongoose.Schema(
     weekTitle: { type: String, default: "" },
     subject: { type: String, default: "" },
     topics: { type: [String], default: [] },
-    questions: { type: [QuestionSchema], default: [] },
-    generatedAt: { type: Date, default: Date.now },
+    // Map: topic name → TopicBank
+    // Using Mixed so Mongoose doesn't try to enforce a fixed schema on keys
+    topicBanks: { type: Map, of: TopicBankSchema, default: {} },
   },
   { timestamps: true },
 );
 
-// One question bank per course+week
 WeekQuizSchema.index({ courseId: 1, weekNumber: 1 }, { unique: true });
 
 module.exports = mongoose.model("WeekQuiz", WeekQuizSchema);

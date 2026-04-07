@@ -1,65 +1,56 @@
-// backend/utils/generateQuestions.js
+// backend/utils/generateQuestions.js  (v3)
 // ─────────────────────────────────────────────────────────────────────────────
-// Generates EXACTLY 10 questions per week using Groq
-// Fixes:
-//   ✅ Deterministic distribution across topics
-//   ✅ Enforces EXACTLY 10 questions (no 9 / 11 issues)
-//   ✅ Handles LLM under-generation with fallback
+// Generates a focused question bank for ONE topic at a time.
+// Each question now includes a `subtopic` field — a specific sub-concept
+// within the topic (e.g. topic="Inheritance", subtopic="method overriding").
+// This enables precise weakness detection at the subtopic level.
+//
+// Called once per topic on first quiz access. Results cached in WeekQuiz.topicBanks.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const Groq = require("groq-sdk");
-
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-/**
- * Create exact distribution of 10 questions across topics
- * Example:
- *  3 topics → [4,3,3]
- *  4 topics → [3,3,2,2]
- */
-function questionsPerTopicExact(topicCount) {
-  const base = Math.floor(10 / topicCount);
-  const remainder = 10 % topicCount;
-
-  const distribution = Array(topicCount).fill(base);
-
-  for (let i = 0; i < remainder; i++) {
-    distribution[i]++;
-  }
-
-  return distribution;
-}
+const QUESTIONS_PER_TOPIC = 5; // fixed — enough for meaningful pass/fail per topic
 
 /**
- * Generate questions for a single topic
+ * Generate questions for a single topic with subtopic tagging.
+ *
+ * @param {string} subject   - e.g. "Java Backend Development"
+ * @param {string} weekTitle - e.g. "Object Oriented Programming"
+ * @param {string} topic     - e.g. "Inheritance"
+ * @returns {Promise<Array>} validated question objects
  */
-async function generateForTopic(subject, weekTitle, topic, count) {
-  const prompt = `Generate EXACTLY ${count} quiz questions for a student learning ${subject}.
-Week topic: "${weekTitle}" — focusing on: "${topic}".
+async function generateTopicQuestions(subject, weekTitle, topic) {
+  const prompt = `Generate exactly ${QUESTIONS_PER_TOPIC} quiz questions for a student learning "${subject}".
+Week: "${weekTitle}". Topic: "${topic}".
 
-Return ONLY a JSON array. No markdown. No explanation. No extra text.
+Each question must test a SPECIFIC subtopic within "${topic}" (e.g. if topic is "Inheritance", subtopics might be "extends keyword", "method overriding", "super keyword", "constructor chaining").
 
-STRICT RULE: Return EXACTLY ${count} questions. Not more, not less.
+Return ONLY a valid JSON array. No markdown. No explanation outside the array.
 
-Format:
 [
   {
-    "question": "Clear, specific question text.",
-    "options": ["Option A text", "Option B text", "Option C text", "Option D text"],
-    "answer": "A",
-    "explanation": "Why A is correct in 1-2 sentences.",
+    "question": "Specific, clear question text.",
+    "options": ["Option A", "Option B", "Option C", "Option D"],
+    "answer": "B",
+    "explanation": "Why B is correct. Why others are wrong. 2 sentences max.",
     "topic": "${topic}",
-    "difficulty": "easy|medium|hard",
-    "question_type": "mcq|true_false|scenario"
+    "subtopic": "specific concept being tested",
+    "difficulty": "easy",
+    "question_type": "mcq"
   }
 ]
 
 Rules:
-- For true_false: options must be exactly ["True", "False"], answer must be "True" or "False"
-- For mcq/scenario: exactly 4 options labelled A B C D, answer is one letter
-- Mix difficulties appropriately
-- Questions must be about "${topic}" specifically
-- No repeated question structures`;
+- Exactly ${QUESTIONS_PER_TOPIC} questions
+- Mix: 2 easy, 2 medium, 1 hard
+- Mix question_type: at least 1 true_false, 1 scenario, rest mcq
+- true_false: options must be exactly ["True","False"], answer "True" or "False"
+- mcq/scenario: exactly 4 options, answer is "A","B","C", or "D"
+- subtopic must be a specific 2-4 word concept, not just repeat the topic name
+- Questions must be about "${topic}" specifically — not generic programming
+- No duplicate question structures`;
 
   const completion = await groq.chat.completions.create({
     model: "llama-3.3-70b-versatile",
@@ -67,132 +58,40 @@ Rules:
       {
         role: "system",
         content:
-          "You are a quiz designer. You respond ONLY with a valid JSON array. No text outside the array.",
+          "You are a quiz designer. Respond ONLY with a valid JSON array. No text outside the array.",
       },
       { role: "user", content: prompt },
     ],
     temperature: 0.3,
-    max_tokens: 1200,
+    max_tokens: 1800,
   });
 
   const raw = completion.choices[0]?.message?.content?.trim() ?? "[]";
-
-  // Clean response
   const cleaned = raw
     .replace(/```json/g, "")
     .replace(/```/g, "")
     .trim();
-
   const match = cleaned.match(/\[[\s\S]*\]/);
   if (!match) return [];
 
+  let parsed;
   try {
-    const parsed = JSON.parse(match[0]);
-    return Array.isArray(parsed) ? parsed : [];
+    parsed = JSON.parse(match[0]);
   } catch {
     return [];
   }
+
+  if (!Array.isArray(parsed)) return [];
+
+  // Validate — drop any malformed questions
+  return parsed.filter(
+    (q) =>
+      q.question &&
+      Array.isArray(q.options) &&
+      q.answer &&
+      q.explanation &&
+      q.topic,
+  );
 }
 
-/**
- * Generate EXACTLY 10 questions for a week
- */
-async function generateWeekQuestions(subject, weekTitle, topics) {
-  const results = [];
-
-  if (!topics || topics.length === 0) return results;
-
-  const distribution = questionsPerTopicExact(topics.length);
-
-  // ── Step 1: Generate per topic ───────────────────────────────────────────
-  for (let i = 0; i < topics.length; i++) {
-    const topic = topics[i];
-    const count = distribution[i];
-
-    try {
-    let qs = await generateForTopic(subject, weekTitle, topic, count);
-
-    // 🔥 HARD ENFORCE PER-TOPIC COUNT
-    let attempts = 3; // retry max 3 times
-
-    while (qs.length < count && attempts > 0) {
-      const needed = count - qs.length;
-
-      try {
-        const extra = await generateForTopic(subject, weekTitle, topic, needed);
-        qs = qs.concat(extra);
-      } catch {}
-
-      attempts--;
-    }
-
-    // Trim if extra
-    qs = qs.slice(0, count);
-
-      for (const q of qs) {
-        if (
-          q &&
-          q.question &&
-          q.options &&
-          q.answer &&
-          q.explanation &&
-          q.topic
-        ) {
-          results.push(q);
-        }
-      }
-    } catch (err) {
-      console.error(
-        `[generateQuestions] Failed for topic "${topic}":`,
-        err.message,
-      );
-    }
-  }
-
-  // ── Step 2: Trim if too many ─────────────────────────────────────────────
-  if (results.length > 10) {
-    return results.slice(0, 10);
-  }
-
-  // ── Step 3: Fallback fill if less than 10 ────────────────────────────────
-  let safety = 5; // avoid infinite loops
-
-  while (results.length < 10 && safety > 0) {
-    const fallbackTopic = topics[0];
-
-    try {
-      const extra = await generateForTopic(
-        subject,
-        weekTitle,
-        fallbackTopic,
-        1,
-      );
-
-      if (extra.length > 0) {
-        const q = extra[0];
-
-        if (
-          q &&
-          q.question &&
-          q.options &&
-          q.answer &&
-          q.explanation &&
-          q.topic
-        ) {
-          results.push(q);
-        }
-      } else {
-        break;
-      }
-    } catch {
-      break;
-    }
-
-    safety--;
-  }
-
-  // ── Final Guarantee ──────────────────────────────────────────────────────
-  return results.slice(0, 10);
-}
-
-module.exports = { generateWeekQuestions };
+module.exports = { generateTopicQuestions, QUESTIONS_PER_TOPIC };

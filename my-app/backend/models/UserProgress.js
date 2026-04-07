@@ -1,11 +1,14 @@
-// backend/models/UserProgress.js  (updated)
+// backend/models/UserProgress.js  (v3)
 // ─────────────────────────────────────────────────────────────────────────────
-// Changes from v1:
-//   - QuizSchema now has an `attempts` array instead of a flat score
-//   - Each attempt stores per-question results (questionIndex + correct)
-//   - bestScore and passed are STILL kept as top-level fields for fast
-//     week-completion checks (no need to iterate attempts for that)
-//   - Topic analysis is derived from attempts at read time — not stored
+// Key change from v2:
+//   - week.quiz (single quiz) → week.topicQuizzes (array, one entry per topic)
+//   - Each TopicQuiz tracks attempts with subtopic-level results
+//   - week.quizSummary computed field: how many topics passed / total
+//
+// Week completion now checks:
+//   - Resources ≥ 70% complete
+//   - At least 75% of topic quizzes passed
+//   - Project done
 // ─────────────────────────────────────────────────────────────────────────────
 
 const mongoose = require("mongoose");
@@ -21,33 +24,35 @@ const ResourceSchema = new mongoose.Schema(
   { _id: false },
 );
 
-// ── Per-question result inside one attempt ────────────────────────────────────
+// ── Per-question result ───────────────────────────────────────────────────────
 const QuestionResultSchema = new mongoose.Schema(
   {
-    questionIndex: { type: Number, required: true }, // index in WeekQuiz.questions
-    topic: { type: String, required: true }, // denormalised for fast analysis
+    questionIndex: { type: Number, required: true },
+    topic: { type: String, required: true },
+    subtopic: { type: String, default: "" }, // for fine-grained weakness detection
     correct: { type: Boolean, required: true },
-    selected: { type: String, default: "" }, // what the user chose
+    selected: { type: String, default: "" },
   },
   { _id: false },
 );
 
-// ── One quiz attempt ──────────────────────────────────────────────────────────
+// ── One attempt ───────────────────────────────────────────────────────────────
 const AttemptSchema = new mongoose.Schema(
   {
-    score: { type: Number, required: true }, // correct count out of totalQuestions
-    total: { type: Number, required: true }, // total questions in that attempt
+    score: { type: Number, required: true },
+    total: { type: Number, required: true },
     results: { type: [QuestionResultSchema], default: [] },
     attemptedAt: { type: Date, default: Date.now },
   },
   { _id: false },
 );
 
-// ── Quiz (per week, per user) ──────────────────────────────────────────────────
-const QuizSchema = new mongoose.Schema(
+// ── Per-topic quiz ────────────────────────────────────────────────────────────
+const TopicQuizSchema = new mongoose.Schema(
   {
+    topic: { type: String, required: true },
     bestScore: { type: Number, default: 0 },
-    passed: { type: Boolean, default: false },
+    passed: { type: Boolean, default: false }, // bestScore >= PASS_SCORE, permanent
     attempts: { type: [AttemptSchema], default: [] },
     lastAttemptAt: { type: Date, default: null },
   },
@@ -69,7 +74,7 @@ const WeekSchema = new mongoose.Schema(
   {
     weekNumber: { type: Number, required: true },
     resources: { type: [ResourceSchema], default: [] },
-    quiz: { type: QuizSchema, default: () => ({}) },
+    topicQuizzes: { type: [TopicQuizSchema], default: [] }, // one per topic
     project: { type: ProjectSchema, default: () => ({}) },
     isCompleted: { type: Boolean, default: false },
     completedAt: { type: Date, default: null },

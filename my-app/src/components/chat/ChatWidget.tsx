@@ -79,6 +79,19 @@ export default function ChatWidget({
 
   const { messages, loading, send, clear } = useChat(courseId, context);
 
+useEffect(() => {
+  const handler = (e: any) => {
+    const message = e.detail?.message;
+    if (!message) return;
+
+    setInput(message); // fill input
+    setOpen(true); // open chat UI
+  };
+
+  window.addEventListener("open-chat", handler);
+  return () => window.removeEventListener("open-chat", handler);
+}, []);
+
   // Auto-scroll to latest message
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });

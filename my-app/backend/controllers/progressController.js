@@ -8,6 +8,7 @@
 // Auth assumption: req.userId is populated by auth middleware BEFORE these
 // controllers run. See middleware/auth.js.
 // ─────────────────────────────────────────────────────────────────────────────
+const { validateCourseId } = require("../utils/validateCourseId");
 
 const UserProgress = require("../models/UserProgress");
 const { isWeekComplete, PASS_SCORE } = require("../utils/weekCompletion");
@@ -64,7 +65,8 @@ function ensureResource(week, resourceId, url = "") {
 // =============================================================================
 const getProgress = async (req, res) => {
   try {
-    const { courseId } = req.params;
+   const { courseId } = req.params;
+   if (!validateCourseId(courseId, res)) return;
 
     // findOneAndUpdate with upsert so first call auto-creates the document
     let progress = await UserProgress.findOneAndUpdate(
@@ -90,6 +92,7 @@ const getProgress = async (req, res) => {
 const markResource = async (req, res) => {
   try {
     const { courseId } = req.params;
+    if (!validateCourseId(courseId, res)) return;
     const { weekNumber, resourceId, url } = req.body;
 
     if (!weekNumber || !resourceId) {
@@ -140,6 +143,7 @@ const markResource = async (req, res) => {
 const submitQuizScore = async (req, res) => {
   try {
     const { courseId } = req.params;
+    if (!validateCourseId(courseId, res)) return;
     const { weekNumber, score } = req.body;
 
     // ── Validation ──────────────────────────────────────────────────────────
@@ -177,6 +181,12 @@ const submitQuizScore = async (req, res) => {
 
     // ── Ensure week exists ──────────────────────────────────────────────────
     const week = ensureWeek(progress, Number(weekNumber));
+    week.quiz = week.quiz || {
+      bestScore: 0,
+      passed: false,
+      attempts: [],
+      lastAttemptAt: null,
+    };
 
     // ── Create attempt object (IMPORTANT FIX) ───────────────────────────────
     const attempt = {
@@ -184,6 +194,12 @@ const submitQuizScore = async (req, res) => {
       total: 10,
       attemptedAt: new Date(),
     };
+
+    if (!week.quiz || typeof week.quiz !== "object") week.quiz = {};
+    week.quiz.bestScore = week.quiz.bestScore ?? 0;
+    week.quiz.passed = week.quiz.passed ?? false;
+    week.quiz.attempts = week.quiz.attempts ?? 0;
+    week.quiz.lastAttemptAt = week.quiz.lastAttemptAt ?? null;
 
     // ── Quiz rules ──────────────────────────────────────────────────────────
 
@@ -233,6 +249,7 @@ const submitQuizScore = async (req, res) => {
 const markProject = async (req, res) => {
   try {
     const { courseId } = req.params;
+    if (!validateCourseId(courseId, res)) return;
     const { weekNumber, githubLink = "" } = req.body;
 
     if (!weekNumber) {
@@ -268,6 +285,7 @@ const markProject = async (req, res) => {
 const getWeekProgress = async (req, res) => {
   try {
     const { courseId, weekNumber } = req.params;
+    if (!validateCourseId(courseId, res)) return;
 
     const progress = await UserProgress.findOne({
       userId: req.userId,
