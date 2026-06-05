@@ -22,7 +22,7 @@
 - [Team](#team)
 
 ---
-
+(Basic Walkthrough Video of Pathwise AI) Drive link: https://drive.google.com/file/d/1mBVpWZDYTJocyGvneJpLyiHZQYulsRwE/view?usp=drive_link
 ## Overview
 
 PathwiseAI addresses two fundamental problems with online learning: one-size-fits-all content and fragmented resources. You tell it what you want to learn, your current level, and your goal — it generates a structured multi-week curriculum, fetches relevant YouTube tutorials and GitHub repositories for every topic, creates per-topic quizzes, and blocks you from advancing until you actually understand the material.
