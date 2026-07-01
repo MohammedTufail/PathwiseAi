@@ -42,21 +42,25 @@ type FormState = {
 const LS_SAVED_PATHS = "savedPaths";
 const LS_CURRICULUM = "curriculum";
 const LS_SUBJECT = "subject";
-const API_URL = "https://pathwiseai-re2v.onrender.com/api/generate";
-const TIMEOUT_MS = 180_000;
+const LS_TOKEN = "token"; // key where login stores the JWT
+// Home.tsx
+const API_URL = "http://localhost:5001/api/generate"; // temp for local testing;
+const TIMEOUT_MS = 240_000;
 
-// Steps shown in the full-screen loader during generation
+// Updated: step 6 mentions topic content generation so the loader
+// stays honest about the extra ~20-30 seconds it now takes.
 const LOADER_STEPS = [
   { text: "Analysing your subject and skill level…" },
   { text: "Structuring weekly learning milestones…" },
   { text: "Generating topics and projects per week…" },
   { text: "Fetching YouTube resources for each topic…" },
   { text: "Searching GitHub repositories to match topics…" },
+  { text: "Writing AI micro-lessons for every topic…" }, // ← new
   { text: "Assembling your personalised curriculum…" },
   { text: "Almost there — polishing the final plan…" },
 ];
 
-// ─── Mock curriculum — DELETE ExampleCard and this once UI testing is done ───
+// ─── Mock curriculum ──────────────────────────────────────────────────────────
 
 const MOCK_CURRICULUM = {
   weeks: [
@@ -137,6 +141,14 @@ function weekCount(curriculum: unknown): number {
   }
 }
 
+/**
+ * Returns the JWT stored by the login flow, or null if not found.
+ * server.js authMiddleware expects: Authorization: Bearer <token>
+ */
+function getAuthToken(): string | null {
+  return localStorage.getItem(LS_TOKEN);
+}
+
 // ─── BottomGradient ───────────────────────────────────────────────────────────
 
 const BottomGradient = () => (
@@ -146,7 +158,7 @@ const BottomGradient = () => (
   </>
 );
 
-// ─── ExampleCard — DELETE once UI testing is done ─────────────────────────────
+// ─── ExampleCard ──────────────────────────────────────────────────────────────
 
 const ExampleCard = ({
   index,
@@ -275,7 +287,7 @@ const Home = () => {
   const [savedPaths, setSavedPaths] = useState<SavedPath[]>(loadSavedPaths);
   const [error, setError] = useState<string | null>(null);
 
-  // Sync across tabs
+  // Sync savedPaths across tabs
   useEffect(() => {
     const onStorage = () => setSavedPaths(loadSavedPaths());
     window.addEventListener("storage", onStorage);
@@ -323,22 +335,31 @@ const Home = () => {
     [form],
   );
 
-  // ── Generate ──
+  // ── Generate ──────────────────────────────────────────────────────────────
   const handleGenerate = async () => {
     if (!isFormComplete || loading) return;
     setError(null);
-
-    // Show the multi-step loader immediately
     setLoading(true);
     setShowLoader(true);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
+    // ── Auth token ──────────────────────────────────────────────────────────
+    // server.js wraps /api/generate with authMiddleware which requires
+    // "Authorization: Bearer <jwt>" — read the token saved at login.
+    const token = getAuthToken();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
     try {
       const res = await fetch(API_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           subject: form.subject.trim(),
           level: form.level.trim(),
@@ -348,6 +369,11 @@ const Home = () => {
       });
 
       clearTimeout(timeout);
+
+      // Surface auth errors clearly so they're not silently swallowed
+      if (res.status === 401) {
+        throw new Error("Session expired. Please log in again.");
+      }
 
       if (!res.ok) {
         throw new Error(`Server error (${res.status})`);
@@ -363,9 +389,17 @@ const Home = () => {
         throw new Error("Invalid curriculum received from AI.");
       }
 
+      // NEW CHECK
+      data.weeks.forEach((week: any) => {
+        if (!week.topicContent) {
+          console.warn("Missing topicContent in week", week.week);
+        }
+      });
+      // data is the full {week s:[...]} object where each week now contains
+      // a topicContent field from the updated app.py pipeline.
       saveNewPath(data);
 
-      // Keep loader visible briefly for the last step to settle
+      // Keep loader on briefly for the last step to settle
       setTimeout(() => {
         setShowLoader(false);
         activateCurriculum(data, form.subject.trim());
@@ -414,9 +448,7 @@ const Home = () => {
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && isFormComplete && !loading) {
-      handleGenerate();
-    }
+    if (e.key === "Enter" && isFormComplete && !loading) handleGenerate();
   };
 
   const totalCards = 1 + savedPaths.length;
@@ -452,14 +484,13 @@ const Home = () => {
             Build your Personalized Curriculum with AI
           </motion.p>
 
-          {/* ── Form card — full width with GlowingEffect ── */}
+          {/* ── Form card ── */}
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.13 }}
             className="w-full"
           >
-            {/* GlowingEffect wrapper */}
             <div className="relative rounded-2xl p-[1px] bg-gradient-to-br from-white/10 via-white/5 to-white/10">
               <GlowingEffect
                 spread={80}
@@ -472,7 +503,6 @@ const Home = () => {
                 className="relative rounded-2xl border border-white/10 bg-gradient-to-br from-gray-950/95 via-black to-gray-950/95 backdrop-blur p-8"
                 onKeyDown={onKeyDown}
               >
-                {/* Card header */}
                 <div className="flex items-center gap-2 mb-6">
                   <div className="h-6 w-6 rounded-lg bg-green-500/10 border border-green-500/20 flex items-center justify-center">
                     <IconSparkles className="h-3.5 w-3.5 text-green-400" />
@@ -482,7 +512,6 @@ const Home = () => {
                   </p>
                 </div>
 
-                {/* Three inputs in a row */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
                   {/* Subject */}
                   <div className="flex flex-col gap-1.5">
@@ -561,7 +590,7 @@ const Home = () => {
                   )}
                 </AnimatePresence>
 
-                {/* Generate button — full width */}
+                {/* Generate button */}
                 <button
                   onClick={handleGenerate}
                   disabled={loading || !isFormComplete}
@@ -581,10 +610,9 @@ const Home = () => {
                   <BottomGradient />
                 </button>
 
-                {/* Hint below button */}
                 <p className="text-center text-[11px] text-gray-600 mt-3">
-                  Generation takes 30–90 seconds — resources are fetched live
-                  for each topic
+                  Generation takes 60–120 seconds — resources and AI
+                  micro-lessons are built live for each topic
                 </p>
               </div>
             </div>
@@ -597,7 +625,6 @@ const Home = () => {
             transition={{ duration: 0.45, delay: 0.2 }}
             className="w-full space-y-4"
           >
-            {/* Section header */}
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-white flex items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-green-400 shadow-[0_0_6px_#4ade80]" />
@@ -616,12 +643,9 @@ const Home = () => {
               )}
             </div>
 
-            {/* Grid: 2 cols → 3 → 4 */}
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-              {/* Slot 0 — Example card. DELETE this line once UI testing is done. */}
               <ExampleCard index={0} onOpen={handleLoadMock} />
 
-              {/* Slots 1+ — generated paths, newest first */}
               <AnimatePresence initial={false}>
                 {savedPaths.map((path, i) => (
                   <SavedPathCard

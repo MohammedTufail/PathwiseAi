@@ -31,6 +31,7 @@ interface Props {
   topicName: string;
   videos: VideoResource[];
   repos: RepoResource[];
+
   completedResourceIds: string[]; // from DB
   onOpen: (resourceId: string, url: string) => void; // just opens link now
   onToggleDone: (resourceId: string) => void;
@@ -53,6 +54,7 @@ export default function ResourceList({
   repos,
   completedResourceIds,
   onOpen,
+  onToggleDone,
 }: Props) {
   const isCompleted = (id: string) => completedResourceIds.includes(id);
 

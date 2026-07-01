@@ -20,6 +20,7 @@
  * Detect the intent of a user message to shape the prompt mode.
  * Returns "hint" | "explain" | "general"
  */
+
 function detectMode(message) {
   const m = message.toLowerCase();
   const isHint =

@@ -127,7 +127,7 @@ export default function QuizResults({
   loadingRemediation,
   onLoadRemediation,
   onStartReQuiz,
-  onSendToChat,
+  
   onRetry,
   onClose,
 }: Props) {
@@ -140,6 +140,7 @@ export default function QuizResults({
   const weakSubtopics = attemptResult?.weakSubtopics ?? [];
   const hasWeak = weakSubtopics.length > 0 && !isReQuiz;
   const showRemediation = remediation !== null;
+  
 const handleAskTutor = (prompt: string) => {
   window.dispatchEvent(
     new CustomEvent("open-chat", { detail: { message: prompt } }),

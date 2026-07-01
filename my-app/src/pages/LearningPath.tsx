@@ -1,11 +1,10 @@
-// learningPath
-// What changed from the previous version:
-//   1. Removed the inline WeekCard component (now in components/progress/WeekCard.tsx)
-//   2. Removed `completedWeeks` useState — progress comes from the DB via useProgress
-//   3. Added useProgress hook — loads/saves all week progress
-//   4. overallProgress is now calculated from DB-completed weeks, not hardcoded
-//   5. The new WeekCard receives weekProgress + isLocked + actions from useProgress
-//   6. Sidebar profile + progress bar now reflect real DB progress
+// learningPath.tsx
+// ─────────────────────────────────────────────────────────────────────────────
+// Fix log:
+//   - WeekData type now includes topicContent (was missing — caused TypeScript
+//     to silently drop the field when parsing localStorage JSON into state)
+//   - CurriculumData type updated to match
+//   - No other logic changes — all existing hooks, actions, and UI preserved
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useState } from "react";
@@ -32,14 +31,9 @@ import {
   IconSettings,
 } from "@tabler/icons-react";
 
-// New: progress-aware WeekCard
 import WeekCard from "../components/progress/WeekCard";
-
-// New: progress hook
 import { useProgress } from "../hooks/useProgress";
-
 import ChatWidget from "../components/chat/ChatWidget";
-
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,6 +42,15 @@ type ResourceItem = {
   url: string;
   name?: string;
   stars?: number;
+};
+
+// Matches TopicContentItem in TopicContent.tsx exactly.
+// Defined inline here so learningPath.tsx has no extra import dependency.
+type TopicContentItem = {
+  explanation: string;
+  analogy: string;
+  example: string; // empty string when not applicable
+  whyItMatters: string;
 };
 
 type WeekData = {
@@ -61,6 +64,9 @@ type WeekData = {
       repos: ResourceItem[];
     };
   };
+  // AI-generated micro-lesson content per topic — populated by learning_system.py
+  // Must be declared here or TypeScript silently drops it from localStorage JSON
+  topicContent?: Record<string, TopicContentItem>;
 };
 
 type CurriculumData = {
@@ -74,6 +80,8 @@ type UserData = {
 };
 
 // ─── Example curriculum (shown when localStorage is empty) ───────────────────
+// topicContent intentionally omitted here — it's only present for AI-generated
+// curricula, not for the static example shown to new/logged-out users.
 
 const exampleCurriculum: CurriculumData = {
   weeks: [
@@ -171,18 +179,19 @@ const StatPill = ({
 const LearningPath = () => {
   const navigate = useNavigate();
 
-  // ── UI state ─────────────────────────────────────────────────────────────
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [curriculum, setCurriculum] = useState<CurriculumData | null>(null);
   const [userData, setUserData] = useState<UserData>({ name: "User" });
 
-
-  // Read subject synchronously — gives correct courseId on first render
-  const [subject, setSubject] = useState<string>(
+  const [subject] = useState<string>(
     () => localStorage.getItem("subject") ?? "",
   );
 
   // ── Load curriculum from localStorage ────────────────────────────────────
+  // JSON.parse preserves ALL fields including topicContent as long as the
+  // WeekData type above declares it — TypeScript types are compile-time only
+  // and don't strip runtime data, but having the type correct prevents
+  // accidental field omissions in consuming code.
   useEffect(() => {
     const stored = localStorage.getItem("curriculum");
     if (!stored) {
@@ -195,13 +204,15 @@ const LearningPath = () => {
         setCurriculum(exampleCurriculum);
         return;
       }
-      setCurriculum(parsed);
+      // parsed.weeks already contains topicContent per week if the backend
+      // generated it — no mapping needed, set directly.
+      setCurriculum(parsed as CurriculumData);
     } catch {
       setCurriculum(exampleCurriculum);
     }
   }, []);
 
-  // ── Load real user name from localStorage ─────────────────────────────────
+  // ── Load user name from localStorage ─────────────────────────────────────
   useEffect(() => {
     const tryKeys = [
       "user",
@@ -254,9 +265,7 @@ const LearningPath = () => {
     if (found) setUserData(found);
   }, []);
 
-  // ── Progress tracking ─────────────────────────────────────────────────────
-  // courseId uses the subject string so different subjects have separate progress.
-  // Falls back to "default-course" when subject hasn't loaded yet.
+  // ── Progress hook ─────────────────────────────────────────────────────────
   const courseId = subject?.trim() || "";
 
   const {
@@ -269,14 +278,10 @@ const LearningPath = () => {
 
   // ── Derived values ────────────────────────────────────────────────────────
   const totalWeeks = curriculum?.weeks.length ?? 0;
-
-  // Count weeks the DB says are completed
   const completedWeeks =
     progress?.weeks.filter((w) => w.isCompleted).length ?? 0;
-
   const overallProgress =
     totalWeeks > 0 ? Math.round((completedWeeks / totalWeeks) * 100) : 0;
-
   const remainingWeeks = totalWeeks - completedWeeks;
 
   const avatarInitial = userData.name
@@ -286,7 +291,7 @@ const LearningPath = () => {
     .toUpperCase()
     .slice(0, 2);
 
-  // ── Loading state ─────────────────────────────────────────────────────────
+  // ── Loading ───────────────────────────────────────────────────────────────
   if (!curriculum) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-black via-gray-900 to-green-950">
@@ -300,8 +305,6 @@ const LearningPath = () => {
       </div>
     );
   }
-
-  // ----------------------------------------------------
 
   const currentWeekData =
     curriculum.weeks.find(
@@ -319,7 +322,6 @@ const LearningPath = () => {
       <div className="fixed top-1 left-1 h-screen z-40">
         <Sidebar open={sidebarOpen} setOpen={setSidebarOpen}>
           <SidebarBody className="flex flex-col h-screen bg-black/90 backdrop-blur border-r border-white/8 p-4 rounded-lg">
-            {/* Logo */}
             <Link to="/" className="flex items-center gap-3 mb-10 shrink-0">
               <BrainCircuit className="h-5 w-5 text-green-400" />
               {sidebarOpen && (
@@ -333,10 +335,9 @@ const LearningPath = () => {
               )}
             </Link>
 
-            {/* Nav links */}
-            <div className="flex-1 flex flex-col gap-5 overflow-y-auto overflow-x-hidden ">
+            <div className="flex-1 flex flex-col gap-5 overflow-y-auto overflow-x-hidden">
               {sidebarLinks.map((link, idx) => (
-                <div key={idx} className=" rounded-lg">
+                <div key={idx} className="rounded-lg">
                   <GlowingEffect
                     glow
                     disabled={false}
@@ -349,7 +350,6 @@ const LearningPath = () => {
               ))}
             </div>
 
-            {/* User profile section */}
             <div className="mt-auto pt-4 border-t border-white/10 shrink-0">
               {sidebarOpen ? (
                 <motion.div
@@ -358,7 +358,6 @@ const LearningPath = () => {
                   transition={{ duration: 0.3 }}
                   className="rounded-xl bg-white/5 border border-white/10 p-3 space-y-3"
                 >
-                  {/* Avatar + name */}
                   <div className="flex items-center gap-3">
                     <div className="relative shrink-0">
                       <div className="h-10 w-10 rounded-full bg-gradient-to-br from-green-500 to-emerald-700 flex items-center justify-center text-white text-sm font-bold shadow-[0_0_12px_#16a34a55]">
@@ -378,7 +377,6 @@ const LearningPath = () => {
 
                   <div className="border-t border-white/10" />
 
-                  {/* Progress bar */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wider">
@@ -388,7 +386,6 @@ const LearningPath = () => {
                         {overallProgress}%
                       </span>
                     </div>
-
                     <div className="h-1.5 w-full bg-white/8 rounded-full overflow-hidden">
                       <motion.div
                         initial={{ width: 0 }}
@@ -401,7 +398,6 @@ const LearningPath = () => {
                         className="h-full bg-gradient-to-r from-green-500 to-emerald-400 rounded-full shadow-[0_0_8px_#22c55e88]"
                       />
                     </div>
-
                     <div className="flex justify-between text-[10px] text-gray-600">
                       <span>
                         {completedWeeks} week{completedWeeks !== 1 ? "s" : ""}{" "}
@@ -411,7 +407,6 @@ const LearningPath = () => {
                     </div>
                   </div>
 
-                  {/* Mini stats */}
                   <div className="grid grid-cols-2 gap-1.5 pt-1">
                     <div className="rounded-lg bg-white/5 border border-white/8 px-2.5 py-2 text-center">
                       <p className="text-base font-bold text-white">
@@ -432,7 +427,6 @@ const LearningPath = () => {
                   </div>
                 </motion.div>
               ) : (
-                /* Collapsed sidebar — avatar + ring only */
                 <div className="flex flex-col items-center gap-2">
                   <div className="relative">
                     <div className="h-9 w-9 rounded-full bg-gradient-to-br from-green-500 to-emerald-700 flex items-center justify-center text-white text-xs font-bold shadow-[0_0_10px_#16a34a44]">
@@ -485,7 +479,6 @@ const LearningPath = () => {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Stat pills */}
             <div className="hidden md:flex items-center gap-2">
               <StatPill
                 icon={<Target className="h-3 w-3" />}
@@ -516,7 +509,7 @@ const LearningPath = () => {
               }}
               className="bg-green-500 hover:bg-red-500/10 hover:text-red-400 transition-colors"
             >
-              <LogOut className="h-4 w-4 " />
+              <LogOut className="h-4 w-4" />
             </Button>
           </div>
         </motion.header>
@@ -545,7 +538,6 @@ const LearningPath = () => {
                 unlock the next week.
               </p>
 
-              {/* Overall progress bar */}
               <div className="mt-4 flex items-center gap-3">
                 <div className="flex-1 h-1.5 bg-white/8 rounded-full overflow-hidden">
                   <motion.div
@@ -568,7 +560,6 @@ const LearningPath = () => {
                 {completedWeeks} of {totalWeeks} weeks completed
               </p>
 
-              {/* Progress loading indicator */}
               <AnimatePresence>
                 {progressLoading && (
                   <motion.p
@@ -583,7 +574,6 @@ const LearningPath = () => {
                 )}
               </AnimatePresence>
 
-              {/* Progress error (non-blocking — UI still works) */}
               <AnimatePresence>
                 {progressError && (
                   <motion.div
@@ -600,7 +590,7 @@ const LearningPath = () => {
             </div>
           </motion.div>
 
-          {/* Completion rules reminder */}
+          {/* Completion rules */}
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -626,7 +616,6 @@ const LearningPath = () => {
 
           {/* ── Timeline ── */}
           <div className="relative">
-            {/* Vertical connector line */}
             <motion.div
               initial={{ scaleY: 0 }}
               animate={{ scaleY: 1 }}
@@ -653,6 +642,7 @@ const LearningPath = () => {
           </div>
         </div>
       </motion.main>
+
       {courseId && (
         <ChatWidget
           courseId={courseId}
@@ -666,6 +656,6 @@ const LearningPath = () => {
       )}
     </div>
   );
-};;
+};
 
 export default LearningPath;

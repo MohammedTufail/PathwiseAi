@@ -1,10 +1,10 @@
-// frontend/src/components/progress/WeekCard.tsx  (v3 — full replacement)
+// frontend/src/components/progress/WeekCard.tsx
 // ─────────────────────────────────────────────────────────────────────────────
-// Changes from v2:
-//   - QuizStatus (single quiz button) replaced by TopicQuizBar (per-topic)
-//   - useWeekQuizSummary hook fetches topic pass/fail from backend on expand
-//   - QuizModal receives topic + open/close state
-//   - onSendToChat prop threads through to open ChatWidget with pre-filled message
+// Fix log:
+//   - Added markResourceDone to ProgressActions interface (was called but missing)
+//   - Added TopicContentPreview import + render in expanded section
+//   - onSendToChat correctly passed through to QuizModal
+//   - CoolMode import kept; no other structural changes
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useRef, useState, useEffect } from "react";
@@ -16,6 +16,7 @@ import {
   Lock,
   ChevronDown,
   ChevronUp,
+  Info,
 } from "lucide-react";
 import { Button } from "../button";
 import { GlowingEffect } from "../ui/glowing-effect";
@@ -24,11 +25,13 @@ import ResourceList from "./ResourceList";
 import ProjectSection from "./ProjectSection";
 import TopicQuizBar from "./TopicQuizBar";
 import QuizModal from "../quiz/QuizModal";
+import { TopicContentPreview } from "./TopicContent";
+import type { TopicContentItem } from "./TopicContent";
 import { fetchWeekSummary } from "../../api/quizApi";
 import type { TopicSummaryItem } from "../../api/quizApi";
 import type { WeekProgress } from "../../api/progressApi";
-
 import { CoolMode } from "../ui/cool-mode";
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface ResourceItem {
@@ -46,16 +49,19 @@ interface WeekData {
   resources?: {
     [topic: string]: { videos: ResourceItem[]; repos: ResourceItem[] };
   };
+  // Optional AI-generated micro-lesson content per topic
+  topicContent?: Record<string, TopicContentItem>;
 }
 
 interface ProgressActions {
   openResource: (weekNumber: number, resourceId: string, url: string) => void;
+  // markResourceDone toggles a resource's completion state in the DB
+  markResourceDone: (weekNumber: number, resourceId: string) => void;
   saveQuizScore: (weekNumber: number, score: number) => Promise<unknown>;
   completeProject: (
     weekNumber: number,
     githubLink?: string,
   ) => Promise<unknown>;
- 
 }
 
 interface Props {
@@ -91,7 +97,7 @@ export default function WeekCard({
   const [topicSummary, setTopicSummary] = useState<TopicSummaryItem[]>([]);
   const [summaryLoading, setSummaryLoading] = useState(false);
 
-  // Fetch topic summary when expanded
+  // Fetch topic quiz summary when card is expanded
   useEffect(() => {
     if (
       !expanded ||
@@ -112,11 +118,11 @@ export default function WeekCard({
       .finally(() => setSummaryLoading(false));
   }, [expanded, courseId, week.week, week.topics, isLocked]);
 
-  // Refresh summary after quiz closes
+  // Re-fetch summary after quiz modal closes so badges update immediately
   const handleQuizClose = () => {
     setQuizOpen(false);
     setActiveTopic("");
-    if (courseId) {
+    if (courseId && courseId.trim()) {
       fetchWeekSummary(courseId, week.week, week.topics)
         .then((data) => setTopicSummary(data.topicSummary))
         .catch(() => {});
@@ -140,7 +146,7 @@ export default function WeekCard({
 
   return (
     <>
-      {/* Topic Quiz Modal */}
+      {/* Per-topic Quiz Modal */}
       <QuizModal
         open={quizOpen}
         topic={activeTopic}
@@ -258,10 +264,9 @@ export default function WeekCard({
                 >
                   View Details
                 </Button>
-                {/* Chevron button with circle particles */}
-                <CoolMode
-                 
-                >
+
+                {/* Expand / collapse with cool particle effect */}
+                <CoolMode>
                   <button
                     onClick={() => setExpanded((v) => !v)}
                     className="p-2 rounded-xl border border-white/10 hover:bg-white/5 text-gray-400 hover:text-white transition-all"
@@ -293,36 +298,65 @@ export default function WeekCard({
                   className="overflow-hidden"
                 >
                   <div className="mt-5 pt-5 border-t border-white/8 space-y-5">
-                    {/* Resources per topic */}
+                    {/* Resources per topic — with optional concept preview above each */}
                     {week.topics.map((topic, ti) => {
                       const res = week.resources?.[topic];
-                      if (!res) return null;
+                      const content = week.topicContent?.[topic];
+
+                      // Skip topics with neither content nor resources
+                      if (!res && !content) return null;
+
                       return (
-                        <div key={topic}>
-                          <p className="text-xs font-semibold text-white mb-1">
-                            {topic}
-                          </p>
-                          <ResourceList
-                            weekNumber={week.week}
-                            topicIndex={ti}
-                            topicName={topic}
-                            videos={res.videos.map((v) => ({
-                              title: v.title ?? "",
-                              url: v.url,
-                            }))}
-                            repos={res.repos.map((r) => ({
-                              name: r.name ?? "",
-                              url: r.url,
-                              stars: r.stars ?? 0,
-                            }))}
-                            completedResourceIds={completedResourceIds}
-                            onOpen={(rid, url) =>
-                              actions.openResource(week.week, rid, url)
-                            }
-                            onToggleDone={(rid) =>
-                              actions.markResourceDone(week.week, rid)
-                            }
-                          />
+                        <div key={topic} className="space-y-2 ">
+                          <div className="mt-5 pt-5 border-t border-white/8 space-y-5">
+                            {/* Resource list */}
+                            {res && (
+                              <ResourceList
+                                weekNumber={week.week}
+                                topicIndex={ti}
+                                topicName={topic}
+                                videos={res.videos.map((v) => ({
+                                  title: v.title ?? "",
+                                  url: v.url,
+                                }))}
+                                repos={res.repos.map((r) => ({
+                                  name: r.name ?? "",
+                                  url: r.url,
+                                  stars: r.stars ?? 0,
+                                }))}
+                                completedResourceIds={completedResourceIds}
+                                onOpen={(rid, url) =>
+                                  actions.openResource(week.week, rid, url)
+                                }
+                                onToggleDone={(rid) =>
+                                  actions.markResourceDone(week.week, rid)
+                                }
+                              />
+                            )}
+
+                            {/* Collapsed concept preview — first sentence only */}
+
+                            {content && (
+                              <div className="mt-2 rounded-xl border border-gray-700 bg-gray-900/40 p-3 shadow-[0_0_12px_rgba(34,197,94,0.06)]">
+                                <div className="mb-2 flex items-center gap-2">
+                                  <div className="flex h-6 w-6 items-center justify-center rounded-md bg-green-700/10">
+                                    <Info className="h-3.5 w-3.5 text-green-400" />
+                                  </div>
+
+                                  <div className="leading-tight">
+                                    <p className="text-xs font-semibold text-green-300">
+                                      AI Topic Preview
+                                    </p>
+                                    <p className="text-[11px] text-gray-500">
+                                      Quick explanation before opening
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <TopicContentPreview content={content} />
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     })}

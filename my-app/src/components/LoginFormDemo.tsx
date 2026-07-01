@@ -7,7 +7,6 @@ import GlowCard from "./ui/glow-card";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import logo from "../assets/PathWiseAILogo.png";
-import { IconArrowLeft } from "@tabler/icons-react";
 import {
   IconBrandGoogle,
   IconBrandGithub,

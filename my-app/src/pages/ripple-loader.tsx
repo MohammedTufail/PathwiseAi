@@ -1,5 +1,4 @@
 // ripple-loader.tsx
-import React from "react";
 import { Ripple } from "../components/ui/ripple";
 import { NumberTicker } from "../components/ui/number-ticker";
 import { cn } from "../lib/utils";

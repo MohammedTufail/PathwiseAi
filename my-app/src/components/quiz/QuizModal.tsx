@@ -33,6 +33,7 @@ interface Props {
   weekNumber: number;
   weekTitle: string;
   subject: string;
+  
   totalTopicsInWeek: number;
   onClose: () => void;
   onScoreSaved?: (topic: string, score: number) => Promise<void>;

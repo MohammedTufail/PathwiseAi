@@ -1,18 +1,15 @@
 // WeekDetails.tsx
 // ─────────────────────────────────────────────────────────────────────────────
-// Fixes from previous version:
-//   1. All actions now use EXACT same method names as WeekCard.tsx:
-//        actions.openResource / actions.markResourceDone /
-//        actions.saveQuizScore / actions.completeProject
-//   2. Per-topic QuizModal — exactly like WeekCard (topic, courseId, weekNumber)
-//   3. TopicQuizBar rendered with fetchWeekSummary — identical to WeekCard
-//   4. ResourceList reused — DB read/done tracking works correctly
-//   5. ProjectSection reused — submit wired to actions.completeProject
-//   6. ChatWidget mounted — same props as learningPath.tsx
-//   7. Progress numbers pulled from same DB record → always in sync with WeekCard
+// Fix log:
+//   - actions.markResourceDone added to useProgress destructure + both ResourceList calls
+//   - onSendToChat wired through from ChatWidget → QuizModal
+//   - chatPrompt state added so QuizModal can pre-fill the ChatWidget
+//   - ChatWidget initialPrompt prop used to open with pre-filled message
+//   - TopicContent import path corrected to match component location
+//   - All TypeScript types consistent with WeekCard.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "../components/button";
@@ -28,17 +25,19 @@ import {
 } from "lucide-react";
 import { GlowingEffect } from "../components/ui/glowing-effect";
 
-// ── Reuse exact same sub-components WeekCard uses ────────────────────────────
+// ── Sub-components ────────────────────────────────────────────────────────────
 import ResourceList from "../components/progress/ResourceList";
 import ProjectSection from "../components/progress/ProjectSection";
 import TopicQuizBar from "../components/progress/TopicQuizBar";
 import QuizModal from "../components/quiz/QuizModal";
 import ChatWidget from "../components/chat/ChatWidget";
 
-// ── Same progress hook + same courseId → same DB record as learningPath.tsx ──
-import { useProgress } from "../hooks/useProgress";
+// AI-generated micro-lesson content
+import { TopicContent } from "../components/progress/TopicContent";
+import type { TopicContentItem } from "../components/progress/TopicContent";
 
-// ── Same quiz summary fetch as WeekCard ──────────────────────────────────────
+// ── Hooks + API ───────────────────────────────────────────────────────────────
+import { useProgress } from "../hooks/useProgress";
 import { fetchWeekSummary } from "../api/quizApi";
 import type { TopicSummaryItem } from "../api/quizApi";
 
@@ -58,9 +57,11 @@ type WeekData = {
   topics: string[];
   project: string;
   resources?: Record<string, TopicResources>;
+  // Optional — populated during curriculum generation by learning_system.py
+  topicContent?: Record<string, TopicContentItem>;
 };
 
-// ─── Mini progress bar (visual only, no DB write) ─────────────────────────────
+// ─── Mini progress bar ────────────────────────────────────────────────────────
 
 const MiniProgressBar = ({
   value,
@@ -105,6 +106,35 @@ const MiniProgressBar = ({
   );
 };
 
+// ─── Step badge (Learn → Resources → Quiz → Build) ───────────────────────────
+
+const StepBadge = ({
+  step,
+  label,
+  done,
+}: {
+  step: number;
+  label: string;
+  done: boolean;
+}) => (
+  <div
+    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-semibold uppercase tracking-wider transition-colors ${
+      done
+        ? "border-green-500/30 bg-green-500/10 text-green-400"
+        : "border-white/8 bg-white/4 text-gray-600"
+    }`}
+  >
+    <span
+      className={`h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold ${
+        done ? "bg-green-500 text-black" : "bg-white/10 text-gray-500"
+      }`}
+    >
+      {done ? "✓" : step}
+    </span>
+    {label}
+  </div>
+);
+
 // ─── WeekDetails page ─────────────────────────────────────────────────────────
 
 const WeekDetails = () => {
@@ -112,11 +142,14 @@ const WeekDetails = () => {
   const location = useLocation();
   const week: WeekData | undefined = location.state?.week;
 
-  // ── courseId — identical to learningPath.tsx ──────────────────────────────
+
+  console.log("Week:", week);
+  console.log("TopicContent:", week?.topicContent);
+  // ── courseId — same key as learningPath.tsx ───────────────────────────────
   const subject = localStorage.getItem("subject") ?? "General";
   const courseId = subject.trim() || "";
 
-  // ── Same hook + same courseId = same DB record as the learning page ───────
+  // ── Progress hook — same hook + same courseId = same DB record ────────────
   const {
     loading: progressLoading,
     error: progressError,
@@ -127,30 +160,32 @@ const WeekDetails = () => {
   const weekProgress = week ? selectors.getWeekProgress(week.week) : undefined;
   const isLocked = week ? selectors.isWeekLocked(week.week) : false;
 
-  // ── Per-topic quiz state (mirrors WeekCard) ───────────────────────────────
+  // ── Quiz modal state ──────────────────────────────────────────────────────
   const [quizOpen, setQuizOpen] = useState(false);
   const [activeTopic, setActiveTopic] = useState("");
   const [topicSummary, setTopicSummary] = useState<TopicSummaryItem[]>([]);
   const [summaryLoading, setSummaryLoading] = useState(false);
 
-  const loadSummary = () => {
+  // ── ChatWidget pre-fill state — set when QuizModal calls onSendToChat ─────
+  const [chatPrompt, setChatPrompt] = useState<string | undefined>(undefined);
+
+  const loadSummary = useCallback(() => {
     if (!courseId || !week || isLocked) return;
     setSummaryLoading(true);
     fetchWeekSummary(courseId, week.week, week.topics)
       .then((data) => setTopicSummary(data.topicSummary))
       .catch(() => setTopicSummary([]))
       .finally(() => setSummaryLoading(false));
-  };
+  }, [courseId, week, isLocked]);
 
   useEffect(() => {
     loadSummary();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [courseId, week?.week, isLocked]);
+  }, [loadSummary]);
 
   const handleQuizClose = () => {
     setQuizOpen(false);
     setActiveTopic("");
-    loadSummary(); // refresh scores after quiz — same as WeekCard
+    loadSummary();
   };
 
   const handleStartTopicQuiz = (topic: string) => {
@@ -158,7 +193,12 @@ const WeekDetails = () => {
     setQuizOpen(true);
   };
 
-  // ── Derived progress (from DB, same source as WeekCard) ───────────────────
+  // When QuizModal wants to pre-fill the chat widget
+  const handleSendToChat = (prompt: string) => {
+    setChatPrompt(prompt);
+  };
+
+  // ── Derived stats ─────────────────────────────────────────────────────────
   const totalResources = week
     ? week.topics.reduce((sum, t) => {
         const r = week.resources?.[t];
@@ -199,7 +239,11 @@ const WeekDetails = () => {
       ? Math.max(...topicSummary.map((t) => t.bestScore ?? 0))
       : 0;
 
-  // ── No week guard ─────────────────────────────────────────────────────────
+  // True if any topic has AI-generated content
+  const hasAnyContent =
+    week?.topics.some((t) => week.topicContent?.[t]) ?? false;
+
+  // ── Guard: no week data ───────────────────────────────────────────────────
   if (!week) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-black via-gray-900 to-green-950">
@@ -223,7 +267,7 @@ const WeekDetails = () => {
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gradient-to-br from-black via-gray-900 to-green-950">
-      {/* Per-topic Quiz Modal — identical props to WeekCard */}
+      {/* Per-topic Quiz Modal */}
       <QuizModal
         open={quizOpen}
         topic={activeTopic}
@@ -236,6 +280,7 @@ const WeekDetails = () => {
         onScoreSaved={async (_topic, score) => {
           await actions.saveQuizScore(week.week, score);
         }}
+        onSendToChat={handleSendToChat}
       />
 
       <div className="max-w-5xl mx-auto px-4 md:px-8 py-6 space-y-8">
@@ -284,7 +329,7 @@ const WeekDetails = () => {
           )}
         </AnimatePresence>
 
-        {/* ── Week hero ── */}
+        {/* ── Week hero card ── */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -344,7 +389,24 @@ const WeekDetails = () => {
                 ))}
               </div>
 
-              {/* Sync indicators */}
+              {/* Learning flow steps — only shown when content exists */}
+              {hasAnyContent && (
+                <div className="flex items-center gap-2 mt-4 flex-wrap">
+                  <StepBadge step={1} label="Learn" done={hasAnyContent} />
+                  <span className="text-white/10 text-xs">→</span>
+                  <StepBadge
+                    step={2}
+                    label="Resources"
+                    done={resourcePct >= 70}
+                  />
+                  <span className="text-white/10 text-xs">→</span>
+                  <StepBadge step={3} label="Quiz" done={allQuizPassed} />
+                  <span className="text-white/10 text-xs">→</span>
+                  <StepBadge step={4} label="Build" done={projectDone} />
+                </div>
+              )}
+
+              {/* Progress sync indicators */}
               <AnimatePresence>
                 {progressLoading && (
                   <motion.p
@@ -438,10 +500,12 @@ const WeekDetails = () => {
               </div>
             </div>
 
-            {/* Completion gates checklist */}
+            {/* Completion gates */}
             <div className="flex flex-wrap gap-3 text-[11px] pt-1 border-t border-white/6">
               <span
-                className={`flex items-center gap-1.5 ${resourcePct >= 70 ? "text-green-400" : "text-gray-600"}`}
+                className={`flex items-center gap-1.5 ${
+                  resourcePct >= 70 ? "text-green-400" : "text-gray-600"
+                }`}
               >
                 {resourcePct >= 70 ? (
                   <CheckCircle2 className="h-3 w-3" />
@@ -452,7 +516,9 @@ const WeekDetails = () => {
               </span>
               <span className="text-gray-700">·</span>
               <span
-                className={`flex items-center gap-1.5 ${allQuizPassed ? "text-green-400" : "text-gray-600"}`}
+                className={`flex items-center gap-1.5 ${
+                  allQuizPassed ? "text-green-400" : "text-gray-600"
+                }`}
               >
                 {allQuizPassed ? (
                   <CheckCircle2 className="h-3 w-3" />
@@ -463,7 +529,9 @@ const WeekDetails = () => {
               </span>
               <span className="text-gray-700">·</span>
               <span
-                className={`flex items-center gap-1.5 ${projectDone ? "text-green-400" : "text-gray-600"}`}
+                className={`flex items-center gap-1.5 ${
+                  projectDone ? "text-green-400" : "text-gray-600"
+                }`}
               >
                 {projectDone ? (
                   <CheckCircle2 className="h-3 w-3" />
@@ -476,7 +544,7 @@ const WeekDetails = () => {
           </div>
         </motion.div>
 
-        {/* ── Topics & Resources ── */}
+        {/* ── Topics: Learn → Resources (per topic) ── */}
         <div>
           <motion.div
             initial={{ opacity: 0 }}
@@ -497,6 +565,8 @@ const WeekDetails = () => {
           <div className="space-y-6">
             {week.topics.map((topic, ti) => {
               const res = week.resources?.[topic];
+              const content = week.topicContent?.[topic];
+
               return (
                 <motion.div
                   key={topic}
@@ -533,8 +603,39 @@ const WeekDetails = () => {
                       )}
                     </div>
 
-                    {/* ResourceList — EXACT same component + actions as WeekCard */}
-                    <div className="p-5">
+                    <div className="p-5 space-y-5">
+                      {/* ── STEP 1: Concept micro-lesson ──────────────────── */}
+                      {content && (
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                            <span className="h-4 w-4 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 flex items-center justify-center text-[9px] font-bold">
+                              1
+                            </span>
+                            Understand the concept
+                          </p>
+                          <TopicContent
+                            topic={topic}
+                            content={content}
+                            index={ti}
+                          />
+                        </div>
+                      )}
+
+                      {/* Divider between concept and resources */}
+                      {content && res && (
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 h-px bg-white/6" />
+                          <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-widest flex items-center gap-1.5">
+                            <span className="h-4 w-4 rounded-full bg-blue-500/20 border border-blue-500/30 text-blue-400 flex items-center justify-center text-[9px] font-bold">
+                              2
+                            </span>
+                            Explore resources
+                          </p>
+                          <div className="flex-1 h-px bg-white/6" />
+                        </div>
+                      )}
+
+                      {/* ── STEP 2: ResourceList ─────────────────────────── */}
                       {res ? (
                         <ResourceList
                           weekNumber={week.week}
@@ -558,9 +659,11 @@ const WeekDetails = () => {
                           }
                         />
                       ) : (
-                        <p className="text-xs text-gray-600 italic">
-                          No resources attached for this topic.
-                        </p>
+                        !content && (
+                          <p className="text-xs text-gray-600 italic">
+                            No resources attached for this topic.
+                          </p>
+                        )
                       )}
                     </div>
                   </div>
@@ -570,7 +673,7 @@ const WeekDetails = () => {
           </div>
         </div>
 
-        {/* ── Per-topic Quiz Bar — same as WeekCard ── */}
+        {/* ── STEP 3: Per-topic Quiz Bar ── */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -585,6 +688,12 @@ const WeekDetails = () => {
             inactiveZone={0.05}
           />
           <div className="rounded-2xl bg-black/60 backdrop-blur border border-white/8 p-5">
+            <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-widest mb-4 flex items-center gap-1.5">
+              <span className="h-4 w-4 rounded-full bg-purple-500/20 border border-purple-500/30 text-purple-400 flex items-center justify-center text-[9px] font-bold">
+                3
+              </span>
+              Test your knowledge
+            </p>
             <TopicQuizBar
               topics={week.topics}
               topicSummary={topicSummary}
@@ -594,7 +703,7 @@ const WeekDetails = () => {
           </div>
         </motion.div>
 
-        {/* ── Project Section — same component as WeekCard ── */}
+        {/* ── STEP 4: Project Section ── */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -609,6 +718,12 @@ const WeekDetails = () => {
             inactiveZone={0.05}
           />
           <div className="rounded-2xl bg-black/60 backdrop-blur border border-white/8 p-5">
+            <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-widest mb-4 flex items-center gap-1.5">
+              <span className="h-4 w-4 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-400 flex items-center justify-center text-[9px] font-bold">
+                4
+              </span>
+              Build the project
+            </p>
             <ProjectSection
               project={weekProgress?.project}
               projectTitle={week.project}
@@ -620,7 +735,7 @@ const WeekDetails = () => {
         </motion.div>
       </div>
 
-      {/* ── ChatWidget — same props as learningPath.tsx ── */}
+      {/* ── ChatWidget — receives initialPrompt when QuizModal triggers onSendToChat ── */}
       {courseId && (
         <ChatWidget
           courseId={courseId}
@@ -630,6 +745,7 @@ const WeekDetails = () => {
           topics={week.topics}
           quizScore={bestQuizScore}
           quizPassed={allQuizPassed}
+          initialPrompt={chatPrompt}
         />
       )}
     </div>

@@ -123,12 +123,20 @@ export function useProgress(courseId: string) {
     },
     [getWeekProgress],
   );
+  const markResourceDone = useCallback(
+    (weekNumber: number, resourceId: string) => {
+      return mutate(() =>
+        markResourceComplete(courseId, weekNumber, resourceId, ""),
+      );
+    },
+    [courseId, mutate],
+  );
 
   return {
     progress,
     loading,
     error,
-    actions: { openResource, saveQuizScore, completeProject },
+    actions: { openResource, saveQuizScore, completeProject, markResourceDone },
     selectors: { getWeekProgress, isWeekLocked, resourceStats },
   };
 }
